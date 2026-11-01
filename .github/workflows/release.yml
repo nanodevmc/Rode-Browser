@@ -11,11 +11,26 @@ permissions:
 
 jobs:
   release:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'windows-latest'
+            args: ''
+          - platform: 'ubuntu-22.04'
+            args: ''
+
+    runs-on: ${{ matrix.platform }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -44,10 +59,11 @@ jobs:
           releaseBody: |
             ## 🚀 Rode Browser Release v__VERSION__
             
-            - **Super fast and ultra lightweight** desktop browser built with Tauri v2 + Win32 C++ FFI.
-            - **Native Chromium (WebView2)** rendering: 100% web standards support without iframe restrictions.
+            - **Super fast and ultra lightweight** desktop browser built with Tauri v2.
+            - **Cross-platform**: Windows (.exe installer) & Linux (.deb / AppImage).
             - **Ultra-low CPU usage (< 5%)** and instant tab hibernation.
-            - **Native C++ module** for Windows default browser registration.
+            - Native C++ integration for Win32 default browser registration.
             - Built-in AdBlock & speed dial new tab screen.
           releaseDraft: false
           prerelease: false
+          args: ${{ matrix.args }}

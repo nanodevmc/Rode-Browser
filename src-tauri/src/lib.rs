@@ -3,6 +3,7 @@ use std::sync::Mutex;
 use std::collections::HashMap;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
+#[cfg(target_os = "windows")]
 unsafe extern "C" {
     fn RegisterAsDefaultBrowserNative() -> i32;
     fn OpenDefaultBrowserSettingsNative();
@@ -16,13 +17,23 @@ struct BrowserState {
 
 #[tauri::command]
 fn register_default_browser() -> bool {
-    let result = unsafe { RegisterAsDefaultBrowserNative() };
-    result == 1
+    #[cfg(target_os = "windows")]
+    {
+        let result = unsafe { RegisterAsDefaultBrowserNative() };
+        return result == 1;
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        true
+    }
 }
 
 #[tauri::command]
 fn open_default_settings() {
-    unsafe { OpenDefaultBrowserSettingsNative() };
+    #[cfg(target_os = "windows")]
+    unsafe {
+        OpenDefaultBrowserSettingsNative();
+    }
 }
 
 #[tauri::command]
@@ -69,7 +80,7 @@ fn open_in_tab(
         let _ = win.set_focus();
     } else {
         let win = WebviewWindowBuilder::new(&app, &tab_id, WebviewUrl::CustomProtocol(parsed_url))
-            .title("Nano Browser View")
+            .title("Rode Browser View")
             .decorations(false)
             .position(x, y)
             .inner_size(width, height)

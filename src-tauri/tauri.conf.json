@@ -1,15 +1,15 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "NanoBrowser",
+  "productName": "RodeBrowser",
   "version": "1.0.0",
-  "identifier": "com.nanodev.nanobrowser",
+  "identifier": "com.nanodev.rodebrowser",
   "build": {
     "frontendDist": "../src-ui"
   },
   "app": {
     "windows": [
       {
-        "title": "Nano Browser",
+        "title": "Rode Browser",
         "width": 1100,
         "height": 720,
         "minWidth": 640,
@@ -26,7 +26,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": "all",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
