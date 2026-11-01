@@ -1,0 +1,620 @@
+class NativeBridge {
+  static get invoke() {
+    return window.__TAURI__?.core?.invoke || window.__TAURI__?.invoke || null;
+  }
+
+  static get window() {
+    return window.__TAURI__?.window?.getCurrentWindow() || null;
+  }
+
+  static async registerAsDefault() {
+    if (this.invoke) {
+      try {
+        return await this.invoke('register_default_browser');
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    return false;
+  }
+
+  static async openDefaultSettings() {
+    if (this.invoke) {
+      try {
+        await this.invoke('open_default_settings');
+      } catch (e) {
+        console.error(e);
+      }
+    }
+  }
+
+  static async getInitialUrl() {
+    if (this.invoke) {
+      try {
+        return await this.invoke('get_initial_url');
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    return null;
+  }
+
+  static async openInTab(tabId, url, x, y, width, height) {
+    if (this.invoke) {
+      try {
+        await this.invoke('open_in_tab', {
+          tabId,
+          url,
+          x,
+          y,
+          width,
+          height
+        });
+      } catch (e) {
+        console.error('Error open_in_tab:', e);
+      }
+    }
+  }
+
+  static async switchTab(tabId) {
+    if (this.invoke) {
+      try {
+        await this.invoke('switch_tab', { tabId });
+      } catch (e) {
+        console.error('Error switch_tab:', e);
+      }
+    }
+  }
+
+  static async closeTabWindow(tabId) {
+    if (this.invoke) {
+      try {
+        await this.invoke('close_tab_window', { tabId });
+      } catch (e) {
+        console.error('Error close_tab_window:', e);
+      }
+    }
+  }
+
+  static minimizeWindow() {
+    this.window?.minimize?.();
+  }
+
+  static toggleMaximizeWindow() {
+    this.window?.toggleMaximize?.();
+  }
+
+  static closeWindow() {
+    this.window?.close?.();
+  }
+}
+
+class ToastNotification {
+  static show(message, duration = 2500) {
+    const el = document.getElementById('status-toast');
+    if (!el) return;
+    el.textContent = message;
+    el.classList.add('visible');
+    clearTimeout(this._timeout);
+    this._timeout = setTimeout(() => {
+      el.classList.remove('visible');
+    }, duration);
+  }
+}
+
+class StorageManager {
+  static getHistory() {
+    try {
+      return JSON.parse(localStorage.getItem('nano_history') || '[]');
+    } catch {
+      return [];
+    }
+  }
+
+  static addHistory(entry) {
+    const list = this.getHistory();
+    list.unshift({ ...entry, time: Date.now() });
+    if (list.length > 200) list.pop();
+    localStorage.setItem('nano_history', JSON.stringify(list));
+  }
+
+  static getBookmarks() {
+    try {
+      return JSON.parse(localStorage.getItem('nano_bookmarks') || '[]');
+    } catch {
+      return [];
+    }
+  }
+
+  static addBookmark(bookmark) {
+    const list = this.getBookmarks();
+    if (!list.some(b => b.url === bookmark.url)) {
+      list.push(bookmark);
+      localStorage.setItem('nano_bookmarks', JSON.stringify(list));
+      return true;
+    }
+    return false;
+  }
+
+  static removeBookmark(url) {
+    let list = this.getBookmarks();
+    list = list.filter(b => b.url !== url);
+    localStorage.setItem('nano_bookmarks', JSON.stringify(list));
+  }
+
+  static isBookmarked(url) {
+    return this.getBookmarks().some(b => b.url === url);
+  }
+}
+
+class Tab {
+  constructor(id, url = 'about:home', title = 'Новая вкладка') {
+    this.id = id;
+    this.url = url;
+    this.title = title;
+    this.faviconUrl = null;
+    this.history = [url];
+    this.historyIndex = 0;
+
+    this.tabElement = this.createTabElement();
+    this.resolveFavicon(url);
+  }
+
+  createTabElement() {
+    const div = document.createElement('div');
+    div.className = 'tab-item';
+    div.dataset.tabId = this.id;
+
+    div.innerHTML = `
+      <div class="tab-favicon-container">
+        <span class="tab-favicon-icon material-symbols-outlined">public</span>
+        <img class="tab-favicon-img" alt="" style="display: none;" />
+      </div>
+      <span class="tab-title">${this.title}</span>
+      <button class="tab-close-btn" title="Закрыть">
+        <span class="material-symbols-outlined" style="font-size: 13px;">close</span>
+      </button>
+    `;
+    return div;
+  }
+
+  resolveFavicon(url) {
+    if (!url || url === 'about:home') {
+      this.resetFavicon();
+      return;
+    }
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol.startsWith('http')) {
+        const faviconSrc = `https://www.google.com/s2/favicons?domain=${parsed.hostname}&sz=32`;
+        this.setFavicon(faviconSrc);
+        return;
+      }
+    } catch {}
+    this.resetFavicon();
+  }
+
+  setFavicon(src) {
+    this.faviconUrl = src;
+    const img = this.tabElement.querySelector('.tab-favicon-img');
+    const icon = this.tabElement.querySelector('.tab-favicon-icon');
+    if (img && icon) {
+      img.src = src;
+      img.onload = () => {
+        img.style.display = 'block';
+        icon.style.display = 'none';
+      };
+      img.onerror = () => this.resetFavicon();
+    }
+  }
+
+  resetFavicon() {
+    this.faviconUrl = null;
+    const img = this.tabElement.querySelector('.tab-favicon-img');
+    const icon = this.tabElement.querySelector('.tab-favicon-icon');
+    if (img && icon) {
+      img.style.display = 'none';
+      icon.style.display = 'block';
+    }
+  }
+
+  updateTitleFromUrl(url) {
+    if (!url || url === 'about:home') {
+      this.title = 'Новая вкладка';
+    } else {
+      try {
+        const parsed = new URL(url);
+        this.title = parsed.hostname || url;
+      } catch {
+        this.title = url;
+      }
+    }
+    const titleEl = this.tabElement.querySelector('.tab-title');
+    if (titleEl) titleEl.textContent = this.title;
+  }
+}
+
+class BrowserEngine {
+  constructor() {
+    this.tabs = new Map();
+    this.activeTabId = null;
+    this.tabCounter = 0;
+
+    this.tabsContainer = document.getElementById('tabs-container');
+    this.viewportContainer = document.getElementById('views-viewport');
+    this.speedDial = document.getElementById('speed-dial');
+    this.omnibox = document.getElementById('omnibox-input');
+    this.progressBar = document.getElementById('progress-bar');
+    this.securityIcon = document.getElementById('security-icon');
+    this.omniboxFaviconImg = document.getElementById('omnibox-favicon-img');
+    this.btnBookmark = document.getElementById('btn-add-bookmark');
+
+    this.modalContainer = document.getElementById('modal-container');
+    this.modalTitle = document.getElementById('modal-title');
+    this.modalBody = document.getElementById('modal-body');
+
+    this.initClock();
+    this.initEvents();
+  }
+
+  initClock() {
+    const updateTime = () => {
+      const now = new Date();
+      const h = String(now.getHours()).padStart(2, '0');
+      const m = String(now.getMinutes()).padStart(2, '0');
+      const clockEl = document.getElementById('dial-clock');
+      if (clockEl) clockEl.textContent = `${h}:${m}`;
+    };
+    updateTime();
+    setInterval(updateTime, 1000);
+  }
+
+  getViewportBounds() {
+    const rect = this.viewportContainer.getBoundingClientRect();
+    return {
+      x: Math.round(rect.left),
+      y: Math.round(rect.top),
+      width: Math.max(100, Math.round(rect.width)),
+      height: Math.max(100, Math.round(rect.height))
+    };
+  }
+
+  async init() {
+    const initialUrl = await NativeBridge.getInitialUrl();
+    this.createTab(initialUrl || 'about:home');
+
+    window.addEventListener('resize', () => {
+      const activeTab = this.tabs.get(this.activeTabId);
+      if (activeTab && activeTab.url !== 'about:home') {
+        const bounds = this.getViewportBounds();
+        NativeBridge.openInTab(activeTab.id, activeTab.url, bounds.x, bounds.y, bounds.width, bounds.height);
+      }
+    });
+  }
+
+  createTab(url = 'about:home') {
+    const id = `tab_${++this.tabCounter}`;
+    const tab = new Tab(id, url);
+
+    this.tabs.set(id, tab);
+    this.tabsContainer.appendChild(tab.tabElement);
+
+    this.bindTabEvents(tab);
+    this.activateTab(id);
+    return tab;
+  }
+
+  activateTab(id) {
+    if (!this.tabs.has(id)) return;
+
+    this.tabs.forEach((tab, tabId) => {
+      tab.tabElement.classList.toggle('active', tabId === id);
+    });
+
+    this.activeTabId = id;
+    const activeTab = this.tabs.get(id);
+
+    if (activeTab.url === 'about:home') {
+      this.speedDial.style.display = 'flex';
+      this.omnibox.value = '';
+      this.updateSecurityBadge('about:home');
+      this.updateOmniboxFavicon(null);
+      this.updateBookmarkButton('about:home');
+      NativeBridge.switchTab('home_empty');
+    } else {
+      this.speedDial.style.display = 'none';
+      this.omnibox.value = activeTab.url;
+      this.updateSecurityBadge(activeTab.url);
+      this.updateOmniboxFavicon(activeTab.faviconUrl);
+      this.updateBookmarkButton(activeTab.url);
+
+      const bounds = this.getViewportBounds();
+      NativeBridge.openInTab(activeTab.id, activeTab.url, bounds.x, bounds.y, bounds.width, bounds.height);
+    }
+  }
+
+  closeTab(id) {
+    if (this.tabs.size <= 1) {
+      NativeBridge.closeWindow();
+      return;
+    }
+
+    const tab = this.tabs.get(id);
+    if (!tab) return;
+
+    tab.tabElement.remove();
+    this.tabs.delete(id);
+    NativeBridge.closeTabWindow(id);
+
+    if (this.activeTabId === id) {
+      const remainingIds = Array.from(this.tabs.keys());
+      this.activateTab(remainingIds[remainingIds.length - 1]);
+    }
+  }
+
+  bindTabEvents(tab) {
+    tab.tabElement.addEventListener('click', (e) => {
+      if (e.target.closest('.tab-close-btn')) {
+        this.closeTab(tab.id);
+      } else {
+        this.activateTab(tab.id);
+      }
+    });
+  }
+
+  updateOmniboxFavicon(faviconUrl) {
+    if (!this.omniboxFaviconImg) return;
+    if (faviconUrl) {
+      this.omniboxFaviconImg.src = faviconUrl;
+      this.omniboxFaviconImg.style.display = 'block';
+      if (this.securityIcon) this.securityIcon.style.display = 'none';
+    } else {
+      this.omniboxFaviconImg.style.display = 'none';
+      if (this.securityIcon) this.securityIcon.style.display = 'inline-block';
+    }
+  }
+
+  updateBookmarkButton(url) {
+    if (!this.btnBookmark) return;
+    const icon = this.btnBookmark.querySelector('.material-symbols-outlined');
+    if (!icon) return;
+    if (StorageManager.isBookmarked(url)) {
+      icon.textContent = 'star';
+      icon.style.color = 'var(--accent-neon)';
+    } else {
+      icon.textContent = 'star_border';
+      icon.style.color = 'var(--text-secondary)';
+    }
+  }
+
+  formatInputToUrl(input) {
+    const trimmed = input.trim();
+    if (!trimmed || trimmed === 'about:home') return 'about:home';
+
+    if (/^https?:\/\//i.test(trimmed) || /^file:\/\//i.test(trimmed)) {
+      return trimmed;
+    }
+
+    if (/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(\/.*)?$/.test(trimmed)) {
+      return `https://${trimmed}`;
+    }
+
+    return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`;
+  }
+
+  updateSecurityBadge(url) {
+    if (url.startsWith('https://')) {
+      this.securityIcon.textContent = 'lock';
+      this.securityIcon.style.color = 'var(--accent-neon)';
+    } else {
+      this.securityIcon.textContent = 'info';
+      this.securityIcon.style.color = 'var(--text-muted)';
+    }
+  }
+
+  navigateActiveTab(rawInput) {
+    const url = this.formatInputToUrl(rawInput);
+    const activeTab = this.tabs.get(this.activeTabId);
+    if (!activeTab) return;
+
+    activeTab.url = url;
+    activeTab.updateTitleFromUrl(url);
+    activeTab.resolveFavicon(url);
+
+    if (url === 'about:home') {
+      this.activateTab(activeTab.id);
+      return;
+    }
+
+    this.speedDial.style.display = 'none';
+    this.omnibox.value = url;
+    this.updateSecurityBadge(url);
+    this.updateOmniboxFavicon(activeTab.faviconUrl);
+    this.updateBookmarkButton(url);
+
+    StorageManager.addHistory({ title: activeTab.title, url });
+
+    const bounds = this.getViewportBounds();
+    NativeBridge.openInTab(activeTab.id, url, bounds.x, bounds.y, bounds.width, bounds.height);
+  }
+
+  openModal(title, renderContent) {
+    this.modalTitle.textContent = title;
+    this.modalBody.innerHTML = '';
+    renderContent(this.modalBody);
+    this.modalContainer.style.display = 'flex';
+  }
+
+  closeModal() {
+    this.modalContainer.style.display = 'none';
+  }
+
+  initEvents() {
+    document.getElementById('btn-new-tab')?.addEventListener('click', () => {
+      this.createTab('about:home');
+    });
+
+    document.getElementById('btn-home')?.addEventListener('click', () => {
+      this.navigateActiveTab('about:home');
+    });
+
+    this.omnibox?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        this.navigateActiveTab(this.omnibox.value);
+        this.omnibox.blur();
+      }
+    });
+
+    document.getElementById('btn-clear-url')?.addEventListener('click', () => {
+      this.omnibox.value = '';
+      this.omnibox.focus();
+    });
+
+    const dialSearch = () => {
+      const val = document.getElementById('dial-search-input')?.value;
+      if (val) this.navigateActiveTab(val);
+    };
+
+    document.getElementById('dial-search-btn')?.addEventListener('click', dialSearch);
+    document.getElementById('dial-search-input')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') dialSearch();
+    });
+
+    document.querySelectorAll('.speed-tile').forEach((tile) => {
+      tile.addEventListener('click', () => {
+        const url = tile.dataset.url;
+        if (url) this.navigateActiveTab(url);
+      });
+    });
+
+    document.querySelectorAll('.bmark-pill').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const url = btn.dataset.url;
+        if (url) this.navigateActiveTab(url);
+      });
+    });
+
+    this.btnBookmark?.addEventListener('click', () => {
+      const activeTab = this.tabs.get(this.activeTabId);
+      if (!activeTab || activeTab.url === 'about:home') return;
+      if (StorageManager.isBookmarked(activeTab.url)) {
+        StorageManager.removeBookmark(activeTab.url);
+        ToastNotification.show('Закладка удалена');
+      } else {
+        StorageManager.addBookmark({ title: activeTab.title, url: activeTab.url });
+        ToastNotification.show('Страница в закладках ★');
+      }
+      this.updateBookmarkButton(activeTab.url);
+    });
+
+    document.getElementById('btn-history')?.addEventListener('click', () => {
+      this.openModal('История', (body) => {
+        const history = StorageManager.getHistory();
+        if (history.length === 0) {
+          body.innerHTML = '<div style="color: var(--text-muted); text-align: center; padding: 20px;">История пуста</div>';
+          return;
+        }
+        history.forEach((item) => {
+          const div = document.createElement('div');
+          div.className = 'modal-list-item';
+          div.innerHTML = `
+            <div class="modal-item-info">
+              <span class="modal-item-title">${item.title}</span>
+              <span class="modal-item-sub">${item.url}</span>
+            </div>
+            <span class="material-symbols-outlined" style="font-size: 16px; color: var(--accent-neon);">arrow_outward</span>
+          `;
+          div.addEventListener('click', () => {
+            this.closeModal();
+            this.navigateActiveTab(item.url);
+          });
+          body.appendChild(div);
+        });
+      });
+    });
+
+    document.getElementById('btn-bookmarks-menu')?.addEventListener('click', () => {
+      this.openModal('Закладки', (body) => {
+        const bmarks = StorageManager.getBookmarks();
+        if (bmarks.length === 0) {
+          body.innerHTML = '<div style="color: var(--text-muted); text-align: center; padding: 20px;">Закладок нет</div>';
+          return;
+        }
+        bmarks.forEach((item) => {
+          const div = document.createElement('div');
+          div.className = 'modal-list-item';
+          div.innerHTML = `
+            <div class="modal-item-info">
+              <span class="modal-item-title">${item.title}</span>
+              <span class="modal-item-sub">${item.url}</span>
+            </div>
+            <span class="material-symbols-outlined" style="font-size: 16px; color: var(--accent-neon);">star</span>
+          `;
+          div.addEventListener('click', () => {
+            this.closeModal();
+            this.navigateActiveTab(item.url);
+          });
+          body.appendChild(div);
+        });
+      });
+    });
+
+    document.getElementById('btn-downloads')?.addEventListener('click', () => {
+      this.openModal('Загрузки', (body) => {
+        body.innerHTML = `
+          <div style="display: flex; flex-direction: column; gap: 8px; align-items: center; padding: 20px; color: var(--text-secondary);">
+            <span class="material-symbols-outlined" style="font-size: 36px; color: var(--accent-neon);">folder_open</span>
+            <span style="font-size: 12px;">Папка: %USERPROFILE%\\Downloads</span>
+          </div>
+        `;
+      });
+    });
+
+    document.getElementById('btn-modal-close')?.addEventListener('click', () => this.closeModal());
+    this.modalContainer?.addEventListener('click', (e) => {
+      if (e.target === this.modalContainer) this.closeModal();
+    });
+
+    document.getElementById('btn-set-default')?.addEventListener('click', async () => {
+      ToastNotification.show('Регистрация в Windows...');
+      const registered = await NativeBridge.registerAsDefault();
+      if (registered) {
+        ToastNotification.show('Успешно! Открываю настройки...');
+        setTimeout(() => NativeBridge.openDefaultSettings(), 400);
+      } else {
+        NativeBridge.openDefaultSettings();
+      }
+    });
+
+    document.getElementById('btn-win-minimize')?.addEventListener('click', () => NativeBridge.minimizeWindow());
+    document.getElementById('btn-win-maximize')?.addEventListener('click', () => NativeBridge.toggleMaximizeWindow());
+    document.getElementById('btn-win-close')?.addEventListener('click', () => NativeBridge.closeWindow());
+
+    window.addEventListener('keydown', (e) => {
+      if (e.ctrlKey && e.key.toLowerCase() === 't') {
+        e.preventDefault();
+        this.createTab('about:home');
+      } else if (e.ctrlKey && e.key.toLowerCase() === 'w') {
+        e.preventDefault();
+        if (this.activeTabId) this.closeTab(this.activeTabId);
+      } else if (e.ctrlKey && e.key.toLowerCase() === 'l') {
+        e.preventDefault();
+        this.omnibox?.select();
+        this.omnibox?.focus();
+      } else if (e.ctrlKey && e.key.toLowerCase() === 'd') {
+        e.preventDefault();
+        this.btnBookmark?.click();
+      } else if (e.ctrlKey && e.key.toLowerCase() === 'h') {
+        e.preventDefault();
+        document.getElementById('btn-history')?.click();
+      } else if (e.key === 'Escape') {
+        this.closeModal();
+      }
+    });
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const browser = new BrowserEngine();
+  browser.init();
+});
