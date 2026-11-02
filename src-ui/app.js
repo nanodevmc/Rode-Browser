@@ -35,6 +35,16 @@ class NativeBridge {
     return null;
   }
 
+  static async startDragging() {
+    if (this.invoke) {
+      try {
+        await this.invoke('drag_window');
+      } catch (e) {
+        console.error(e);
+      }
+    }
+  }
+
   static async minimizeWindow() {
     if (this.invoke) {
       try {
@@ -144,6 +154,28 @@ class NativeBridge {
       }
     }
   }
+
+  static async toggleAdblock(enabled) {
+    if (this.invoke) {
+      try {
+        return await this.invoke('toggle_adblock', { enabled });
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    return enabled;
+  }
+
+  static async toggleEcoMode(enabled) {
+    if (this.invoke) {
+      try {
+        return await this.invoke('toggle_eco_mode', { enabled });
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    return enabled;
+  }
 }
 
 class ToastNotification {
@@ -175,6 +207,11 @@ class StorageManager {
     localStorage.setItem('nano_history', JSON.stringify(list));
   }
 
+  static clearAll() {
+    localStorage.removeItem('nano_history');
+    localStorage.removeItem('nano_bookmarks');
+  }
+
   static getBookmarks() {
     try {
       return JSON.parse(localStorage.getItem('nano_bookmarks') || '[]');
@@ -201,6 +238,19 @@ class StorageManager {
 
   static isBookmarked(url) {
     return this.getBookmarks().some(b => b.url === url);
+  }
+}
+
+class GoogleSuggest {
+  static async fetch(query) {
+    if (!query || query.length < 2) return [];
+    try {
+      const res = await fetch(`https://suggestqueries.google.com/complete/search?client=chrome&q=${encodeURIComponent(query)}`);
+      const data = await res.json();
+      return (data && data[1]) ? data[1].slice(0, 5) : [];
+    } catch {
+      return [];
+    }
   }
 }
 
@@ -296,6 +346,8 @@ class BrowserEngine {
     this.tabs = new Map();
     this.activeTabId = null;
     this.tabCounter = 0;
+    this.adblockActive = true;
+    this.ecoActive = false;
 
     this.tabsContainer = document.getElementById('tabs-container');
     this.viewportContainer = document.getElementById('views-viewport');
@@ -305,10 +357,12 @@ class BrowserEngine {
     this.securityIcon = document.getElementById('security-icon');
     this.omniboxFaviconImg = document.getElementById('omnibox-favicon-img');
     this.btnBookmark = document.getElementById('btn-add-bookmark');
+    this.suggestionsDropdown = document.getElementById('suggestions-dropdown');
 
     this.modalContainer = document.getElementById('modal-container');
     this.modalTitle = document.getElementById('modal-title');
     this.modalBody = document.getElementById('modal-body');
+    this.settingsPopup = document.getElementById('settings-popup');
 
     this.initClock();
     this.initEvents();
@@ -496,6 +550,7 @@ class BrowserEngine {
     const activeTab = this.tabs.get(this.activeTabId);
     if (!activeTab) return;
 
+    this.suggestionsDropdown.style.display = 'none';
     activeTab.url = url;
     activeTab.updateTitleFromUrl(url);
     activeTab.resolveFavicon(url);
@@ -527,9 +582,17 @@ class BrowserEngine {
 
   closeModal() {
     this.modalContainer.style.display = 'none';
+    this.settingsPopup.style.display = 'none';
   }
 
   initEvents() {
+    // Window dragging
+    const dragArea = document.getElementById('drag-titlebar');
+    dragArea?.addEventListener('mousedown', (e) => {
+      if (e.target.closest('button') || e.target.closest('.tab-item')) return;
+      NativeBridge.startDragging();
+    });
+
     // Window controls
     document.getElementById('btn-win-minimize')?.addEventListener('click', () => {
       NativeBridge.minimizeWindow();
@@ -567,6 +630,35 @@ class BrowserEngine {
       this.navigateActiveTab('about:home');
     });
 
+    // Omnibox Google Autocomplete
+    let suggestDebounce = null;
+    this.omnibox?.addEventListener('input', () => {
+      clearTimeout(suggestDebounce);
+      const val = this.omnibox.value.trim();
+      if (!val || val.startsWith('http')) {
+        this.suggestionsDropdown.style.display = 'none';
+        return;
+      }
+      suggestDebounce = setTimeout(async () => {
+        const suggestions = await GoogleSuggest.fetch(val);
+        if (suggestions.length === 0) {
+          this.suggestionsDropdown.style.display = 'none';
+          return;
+        }
+        this.suggestionsDropdown.innerHTML = '';
+        suggestions.forEach((item) => {
+          const div = document.createElement('div');
+          div.className = 'suggestion-item';
+          div.innerHTML = `<span class="material-symbols-outlined">search</span><span>${item}</span>`;
+          div.addEventListener('click', () => {
+            this.navigateActiveTab(item);
+          });
+          this.suggestionsDropdown.appendChild(div);
+        });
+        this.suggestionsDropdown.style.display = 'flex';
+      }, 150);
+    });
+
     this.omnibox?.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
         this.navigateActiveTab(this.omnibox.value);
@@ -576,7 +668,78 @@ class BrowserEngine {
 
     document.getElementById('btn-clear-url')?.addEventListener('click', () => {
       this.omnibox.value = '';
+      this.suggestionsDropdown.style.display = 'none';
       this.omnibox.focus();
+    });
+
+    // Quick tools: AdBlock & Eco
+    const btnAdblock = document.getElementById('btn-adblock');
+    btnAdblock?.addEventListener('click', async () => {
+      this.adblockActive = !this.adblockActive;
+      btnAdblock.classList.toggle('active', this.adblockActive);
+      await NativeBridge.toggleAdblock(this.adblockActive);
+      ToastNotification.show(this.adblockActive ? 'AdBlock включен' : 'AdBlock отключен');
+    });
+
+    const btnEco = document.getElementById('btn-lowspec');
+    btnEco?.addEventListener('click', async () => {
+      this.ecoActive = !this.ecoActive;
+      btnEco.classList.toggle('active', this.ecoActive);
+      await NativeBridge.toggleEcoMode(this.ecoActive);
+      ToastNotification.show(this.ecoActive ? 'Eco Mode включен (анимации отключены)' : 'Eco Mode выключен');
+    });
+
+    // Chrome-style Settings Menu
+    const btnSettings = document.getElementById('btn-settings-menu');
+    btnSettings?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isVisible = this.settingsPopup.style.display === 'flex';
+      this.settingsPopup.style.display = isVisible ? 'none' : 'flex';
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!this.settingsPopup.contains(e.target) && e.target !== btnSettings) {
+        this.settingsPopup.style.display = 'none';
+      }
+      if (!this.suggestionsDropdown.contains(e.target) && e.target !== this.omnibox) {
+        this.suggestionsDropdown.style.display = 'none';
+      }
+    });
+
+    document.getElementById('popup-new-tab')?.addEventListener('click', () => {
+      this.createTab('about:home');
+      this.settingsPopup.style.display = 'none';
+    });
+
+    document.getElementById('popup-history')?.addEventListener('click', () => {
+      document.getElementById('btn-history')?.click();
+      this.settingsPopup.style.display = 'none';
+    });
+
+    document.getElementById('popup-bookmarks')?.addEventListener('click', () => {
+      document.getElementById('btn-bookmarks-menu')?.click();
+      this.settingsPopup.style.display = 'none';
+    });
+
+    document.getElementById('popup-downloads')?.addEventListener('click', () => {
+      document.getElementById('btn-downloads')?.click();
+      this.settingsPopup.style.display = 'none';
+    });
+
+    document.getElementById('popup-set-default')?.addEventListener('click', () => {
+      document.getElementById('btn-set-default')?.click();
+      this.settingsPopup.style.display = 'none';
+    });
+
+    document.getElementById('popup-eco')?.addEventListener('click', () => {
+      btnEco?.click();
+      this.settingsPopup.style.display = 'none';
+    });
+
+    document.getElementById('popup-clear-data')?.addEventListener('click', () => {
+      StorageManager.clearAll();
+      ToastNotification.show('История и данные успешно очищены');
+      this.settingsPopup.style.display = 'none';
     });
 
     const dialSearch = () => {
@@ -682,17 +845,6 @@ class BrowserEngine {
     document.getElementById('btn-modal-close')?.addEventListener('click', () => this.closeModal());
     this.modalContainer?.addEventListener('click', (e) => {
       if (e.target === this.modalContainer) this.closeModal();
-    });
-
-    document.getElementById('btn-set-default')?.addEventListener('click', async () => {
-      ToastNotification.show('Регистрация в Windows...');
-      const registered = await NativeBridge.registerAsDefault();
-      if (registered) {
-        ToastNotification.show('Успешно! Открываю настройки...');
-        setTimeout(() => NativeBridge.openDefaultSettings(), 400);
-      } else {
-        NativeBridge.openDefaultSettings();
-      }
     });
 
     window.addEventListener('keydown', (e) => {

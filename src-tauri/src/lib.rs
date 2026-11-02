@@ -13,6 +13,8 @@ unsafe extern "C" {
 struct BrowserState {
     active_tab: Mutex<Option<String>>,
     tabs: Mutex<HashMap<String, String>>,
+    adblock_enabled: Mutex<bool>,
+    eco_enabled: Mutex<bool>,
 }
 
 #[tauri::command]
@@ -46,6 +48,13 @@ fn get_initial_url() -> Option<String> {
         }
     }
     None
+}
+
+#[tauri::command]
+fn drag_window(app: AppHandle) {
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.start_dragging();
+    }
 }
 
 #[tauri::command]
@@ -238,10 +247,83 @@ fn reload_tab(app: AppHandle, tab_id: String) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn toggle_adblock(app: AppHandle, state: tauri::State<BrowserState>, enabled: bool) -> Result<bool, String> {
+    let mut adb = state.adblock_enabled.lock().map_err(|e| e.to_string())?;
+    *adb = enabled;
+
+    let js = if enabled {
+        r#"
+        (function() {
+            const selectors = '[id*="ad-"], [class*="ad-"], [id*="banner"], [class*="banner"], iframe[src*="ad"], iframe[src*="doubleclick"]';
+            const hideAds = () => {
+                document.querySelectorAll(selectors).forEach(el => el.style.setProperty('display', 'none', 'important'));
+            };
+            hideAds();
+            setInterval(hideAds, 1500);
+        })();
+        "#
+    } else {
+        ""
+    };
+
+    if !js.is_empty() {
+        let active = state.active_tab.lock().map_err(|e| e.to_string())?;
+        if let Some(ref tab_id) = *active {
+            if let Some(win) = app.get_webview_window(tab_id) {
+                let _ = win.eval(js);
+            }
+        }
+    }
+
+    Ok(*adb)
+}
+
+#[tauri::command]
+fn toggle_eco_mode(app: AppHandle, state: tauri::State<BrowserState>, enabled: bool) -> Result<bool, String> {
+    let mut eco = state.eco_enabled.lock().map_err(|e| e.to_string())?;
+    *eco = enabled;
+
+    let js = if enabled {
+        r#"
+        (function() {
+            let style = document.getElementById('rode-eco-style');
+            if (!style) {
+                style = document.createElement('style');
+                style.id = 'rode-eco-style';
+                style.textContent = '*, *::before, *::after { animation-duration: 0s !important; transition-duration: 0s !important; } video { max-width: 100% !important; }';
+                document.head.appendChild(style);
+            }
+        })();
+        "#
+    } else {
+        r#"
+        (function() {
+            let style = document.getElementById('rode-eco-style');
+            if (style) style.remove();
+        })();
+        "#
+    };
+
+    let active = state.active_tab.lock().map_err(|e| e.to_string())?;
+    if let Some(ref tab_id) = *active {
+        if let Some(win) = app.get_webview_window(tab_id) {
+            let _ = win.eval(js);
+        }
+    }
+
+    Ok(*eco)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .manage(BrowserState::default())
+        .manage(BrowserState {
+            active_tab: Mutex::new(None),
+            tabs: Mutex::new(HashMap::new()),
+            adblock_enabled: Mutex::new(true),
+            eco_enabled: Mutex::new(false),
+        })
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -256,6 +338,7 @@ pub fn run() {
             register_default_browser,
             open_default_settings,
             get_initial_url,
+            drag_window,
             minimize_window,
             toggle_maximize_window,
             close_window,
@@ -266,7 +349,9 @@ pub fn run() {
             close_tab_window,
             go_back_tab,
             go_forward_tab,
-            reload_tab
+            reload_tab,
+            toggle_adblock,
+            toggle_eco_mode
         ])
         .run(tauri::generate_context!())
         .expect("error while building tauri application");
