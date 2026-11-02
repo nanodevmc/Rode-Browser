@@ -3,10 +3,6 @@ class NativeBridge {
     return window.__TAURI__?.core?.invoke || window.__TAURI__?.invoke || null;
   }
 
-  static get window() {
-    return window.__TAURI__?.window?.getCurrentWindow() || null;
-  }
-
   static async registerAsDefault() {
     if (this.invoke) {
       try {
@@ -39,19 +35,52 @@ class NativeBridge {
     return null;
   }
 
+  static async minimizeWindow() {
+    if (this.invoke) {
+      try {
+        await this.invoke('minimize_window');
+      } catch (e) {
+        console.error(e);
+      }
+    }
+  }
+
+  static async toggleMaximizeWindow() {
+    if (this.invoke) {
+      try {
+        await this.invoke('toggle_maximize_window');
+      } catch (e) {
+        console.error(e);
+      }
+    }
+  }
+
+  static async closeWindow() {
+    if (this.invoke) {
+      try {
+        await this.invoke('close_window');
+      } catch (e) {
+        console.error(e);
+      }
+    }
+  }
+
   static async openInTab(tabId, url, x, y, width, height) {
     if (this.invoke) {
       try {
-        await this.invoke('open_in_tab', {
-          tabId,
-          url,
-          x,
-          y,
-          width,
-          height
-        });
+        await this.invoke('open_in_tab', { tabId, url, x, y, width, height });
       } catch (e) {
         console.error('Error open_in_tab:', e);
+      }
+    }
+  }
+
+  static async syncTabsGeometry(x, y, width, height) {
+    if (this.invoke) {
+      try {
+        await this.invoke('sync_tabs_geometry', { x, y, width, height });
+      } catch (e) {
+        console.error(e);
       }
     }
   }
@@ -66,6 +95,16 @@ class NativeBridge {
     }
   }
 
+  static async hideAllTabs() {
+    if (this.invoke) {
+      try {
+        await this.invoke('hide_all_tabs');
+      } catch (e) {
+        console.error(e);
+      }
+    }
+  }
+
   static async closeTabWindow(tabId) {
     if (this.invoke) {
       try {
@@ -76,16 +115,34 @@ class NativeBridge {
     }
   }
 
-  static minimizeWindow() {
-    this.window?.minimize?.();
+  static async goBack(tabId) {
+    if (this.invoke) {
+      try {
+        await this.invoke('go_back_tab', { tabId });
+      } catch (e) {
+        console.error(e);
+      }
+    }
   }
 
-  static toggleMaximizeWindow() {
-    this.window?.toggleMaximize?.();
+  static async goForward(tabId) {
+    if (this.invoke) {
+      try {
+        await this.invoke('go_forward_tab', { tabId });
+      } catch (e) {
+        console.error(e);
+      }
+    }
   }
 
-  static closeWindow() {
-    this.window?.close?.();
+  static async reload(tabId) {
+    if (this.invoke) {
+      try {
+        await this.invoke('reload_tab', { tabId });
+      } catch (e) {
+        console.error(e);
+      }
+    }
   }
 }
 
@@ -279,6 +336,27 @@ class BrowserEngine {
     };
   }
 
+  triggerProgress() {
+    this.progressBar.classList.add('loading');
+    this.progressBar.style.width = '40%';
+    setTimeout(() => {
+      if (this.progressBar.classList.contains('loading')) {
+        this.progressBar.style.width = '80%';
+      }
+    }, 200);
+    setTimeout(() => {
+      this.finishProgress();
+    }, 700);
+  }
+
+  finishProgress() {
+    this.progressBar.style.width = '100%';
+    setTimeout(() => {
+      this.progressBar.classList.remove('loading');
+      this.progressBar.style.width = '0%';
+    }, 250);
+  }
+
   async init() {
     const initialUrl = await NativeBridge.getInitialUrl();
     this.createTab(initialUrl || 'about:home');
@@ -287,7 +365,7 @@ class BrowserEngine {
       const activeTab = this.tabs.get(this.activeTabId);
       if (activeTab && activeTab.url !== 'about:home') {
         const bounds = this.getViewportBounds();
-        NativeBridge.openInTab(activeTab.id, activeTab.url, bounds.x, bounds.y, bounds.width, bounds.height);
+        NativeBridge.syncTabsGeometry(bounds.x, bounds.y, bounds.width, bounds.height);
       }
     });
   }
@@ -320,7 +398,7 @@ class BrowserEngine {
       this.updateSecurityBadge('about:home');
       this.updateOmniboxFavicon(null);
       this.updateBookmarkButton('about:home');
-      NativeBridge.switchTab('home_empty');
+      NativeBridge.hideAllTabs();
     } else {
       this.speedDial.style.display = 'none';
       this.omnibox.value = activeTab.url;
@@ -328,6 +406,7 @@ class BrowserEngine {
       this.updateOmniboxFavicon(activeTab.faviconUrl);
       this.updateBookmarkButton(activeTab.url);
 
+      this.triggerProgress();
       const bounds = this.getViewportBounds();
       NativeBridge.openInTab(activeTab.id, activeTab.url, bounds.x, bounds.y, bounds.width, bounds.height);
     }
@@ -432,6 +511,7 @@ class BrowserEngine {
     this.updateOmniboxFavicon(activeTab.faviconUrl);
     this.updateBookmarkButton(url);
 
+    this.triggerProgress();
     StorageManager.addHistory({ title: activeTab.title, url });
 
     const bounds = this.getViewportBounds();
@@ -450,6 +530,35 @@ class BrowserEngine {
   }
 
   initEvents() {
+    // Window controls
+    document.getElementById('btn-win-minimize')?.addEventListener('click', () => {
+      NativeBridge.minimizeWindow();
+    });
+
+    document.getElementById('btn-win-maximize')?.addEventListener('click', () => {
+      NativeBridge.toggleMaximizeWindow();
+    });
+
+    document.getElementById('btn-win-close')?.addEventListener('click', () => {
+      NativeBridge.closeWindow();
+    });
+
+    // Navigation buttons
+    document.getElementById('btn-back')?.addEventListener('click', () => {
+      if (this.activeTabId) NativeBridge.goBack(this.activeTabId);
+    });
+
+    document.getElementById('btn-forward')?.addEventListener('click', () => {
+      if (this.activeTabId) NativeBridge.goForward(this.activeTabId);
+    });
+
+    document.getElementById('btn-reload')?.addEventListener('click', () => {
+      if (this.activeTabId) {
+        this.triggerProgress();
+        NativeBridge.reload(this.activeTabId);
+      }
+    });
+
     document.getElementById('btn-new-tab')?.addEventListener('click', () => {
       this.createTab('about:home');
     });
@@ -585,10 +694,6 @@ class BrowserEngine {
         NativeBridge.openDefaultSettings();
       }
     });
-
-    document.getElementById('btn-win-minimize')?.addEventListener('click', () => NativeBridge.minimizeWindow());
-    document.getElementById('btn-win-maximize')?.addEventListener('click', () => NativeBridge.toggleMaximizeWindow());
-    document.getElementById('btn-win-close')?.addEventListener('click', () => NativeBridge.closeWindow());
 
     window.addEventListener('keydown', (e) => {
       if (e.ctrlKey && e.key.toLowerCase() === 't') {
