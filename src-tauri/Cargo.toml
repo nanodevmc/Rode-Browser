@@ -1,6 +1,6 @@
 [package]
 name = "nanobrowser"
-version = "0.1.0"
+version = "1.0.1"
 description = "Fast Liquid Glass Modern Browser"
 authors = ["NanoDev"]
 license = "MIT"
@@ -19,7 +19,7 @@ cc = "1.2"
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
-tauri = { version = "2.12.5", features = [] }
+tauri = { version = "2.12.5", features = ["unstable"] }
 tauri-plugin-log = "2"
 
 [profile.release]

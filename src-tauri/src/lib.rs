@@ -1,7 +1,7 @@
 use std::env;
 use std::sync::Mutex;
 use std::collections::HashMap;
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, Position, LogicalPosition, Size, LogicalSize};
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewBuilder, Position, PhysicalPosition, Size, PhysicalSize, Emitter};
 
 #[cfg(target_os = "windows")]
 unsafe extern "C" {
@@ -11,8 +11,9 @@ unsafe extern "C" {
 
 #[derive(Default)]
 struct BrowserState {
+    tab_urls: Mutex<HashMap<String, String>>,
     active_tab: Mutex<Option<String>>,
-    tabs: Mutex<HashMap<String, String>>,
+    current_url: Mutex<String>,
     adblock_enabled: Mutex<bool>,
     eco_enabled: Mutex<bool>,
 }
@@ -52,21 +53,21 @@ fn get_initial_url() -> Option<String> {
 
 #[tauri::command]
 fn drag_window(app: AppHandle) {
-    if let Some(win) = app.get_webview_window("main") {
+    if let Some(win) = app.get_window("main") {
         let _ = win.start_dragging();
     }
 }
 
 #[tauri::command]
 fn minimize_window(app: AppHandle) {
-    if let Some(win) = app.get_webview_window("main") {
+    if let Some(win) = app.get_window("main") {
         let _ = win.minimize();
     }
 }
 
 #[tauri::command]
 fn toggle_maximize_window(app: AppHandle) {
-    if let Some(win) = app.get_webview_window("main") {
+    if let Some(win) = app.get_window("main") {
         if let Ok(is_max) = win.is_maximized() {
             if is_max {
                 let _ = win.unmaximize();
@@ -79,13 +80,50 @@ fn toggle_maximize_window(app: AppHandle) {
 
 #[tauri::command]
 fn close_window(app: AppHandle) {
-    if let Some(win) = app.get_webview_window("main") {
+    if let Some(win) = app.get_window("main") {
         let _ = win.close();
     }
 }
 
 #[tauri::command]
-fn open_in_tab(
+fn init_content_view(
+    app: AppHandle,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) -> Result<(), String> {
+    let main_win = app.get_window("main").ok_or("Main window not found")?;
+    let scale_factor = main_win.scale_factor().unwrap_or(1.0);
+
+    let phys_pos = Position::Physical(PhysicalPosition::new(
+        (x * scale_factor) as i32,
+        (y * scale_factor) as i32,
+    ));
+    let phys_size = Size::Physical(PhysicalSize::new(
+        (width * scale_factor) as u32,
+        (height * scale_factor) as u32,
+    ));
+
+    if let Some(wv) = app.get_webview("content_view") {
+        let _ = wv.set_position(phys_pos);
+        let _ = wv.set_size(phys_size);
+    } else {
+        let builder = WebviewBuilder::new(
+            "content_view",
+            WebviewUrl::External("about:blank".parse().unwrap())
+        ).auto_resize();
+
+        let wv = main_win.add_child(builder, phys_pos, phys_size)
+            .map_err(|e| format!("Failed to create content webview: {}", e))?;
+        
+        let _ = wv.hide();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn navigate_content(
     app: AppHandle,
     state: tauri::State<BrowserState>,
     tab_id: String,
@@ -95,154 +133,141 @@ fn open_in_tab(
     width: f64,
     height: f64,
 ) -> Result<(), String> {
-    let mut tabs = state.tabs.lock().map_err(|e| e.to_string())?;
-    let mut active = state.active_tab.lock().map_err(|e| e.to_string())?;
+    let main_win = app.get_window("main").ok_or("Main window not found")?;
+    let scale_factor = main_win.scale_factor().unwrap_or(1.0);
 
-    if let Some(ref prev_id) = *active {
-        if prev_id != &tab_id {
-            if let Some(prev_win) = app.get_webview_window(prev_id) {
-                let _ = prev_win.hide();
-            }
+    let phys_pos = Position::Physical(PhysicalPosition::new(
+        (x * scale_factor) as i32,
+        (y * scale_factor) as i32,
+    ));
+    let phys_size = Size::Physical(PhysicalSize::new(
+        (width * scale_factor) as u32,
+        (height * scale_factor) as u32,
+    ));
+
+    {
+        let mut tabs = state.tab_urls.lock().map_err(|e| e.to_string())?;
+        tabs.insert(tab_id.clone(), url.clone());
+        let mut active = state.active_tab.lock().map_err(|e| e.to_string())?;
+        *active = Some(tab_id);
+    }
+
+    if url == "about:home" || url == "about:blank" {
+        if let Some(wv) = app.get_webview("content_view") {
+            let _ = wv.hide();
         }
+        return Ok(());
     }
 
     let parsed_url: tauri::Url = tauri::Url::parse(&url).map_err(|e| e.to_string())?;
 
-    let main_win = app.get_webview_window("main").ok_or("Main window not found")?;
-    let main_pos = main_win.outer_position().unwrap_or(tauri::PhysicalPosition::new(0, 0));
-    let scale_factor = main_win.scale_factor().unwrap_or(1.0);
+    let wv = match app.get_webview("content_view") {
+        Some(w) => {
+            let _ = w.set_position(phys_pos);
+            let _ = w.set_size(phys_size);
+            let _ = w.navigate(parsed_url);
+            let _ = w.show();
+            let _ = w.set_focus();
+            w
+        }
+        None => {
+            let builder = WebviewBuilder::new("content_view", WebviewUrl::External(parsed_url)).auto_resize();
+            let created = main_win.add_child(builder, phys_pos, phys_size)
+                .map_err(|e| format!("Failed to build content webview: {}", e))?;
+            let _ = created.show();
+            let _ = created.set_focus();
+            created
+        }
+    };
 
-    let screen_x = (main_pos.x as f64 / scale_factor) + x;
-    let screen_y = (main_pos.y as f64 / scale_factor) + y;
+    let app_clone = app.clone();
+    let url_clone = url.clone();
+    tauri::async_runtime::spawn(async move {
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        let _ = app_clone.emit("content_page_loaded", url_clone);
+    });
 
-    if let Some(win) = app.get_webview_window(&tab_id) {
-        let _ = win.set_position(Position::Logical(LogicalPosition::new(screen_x, screen_y)));
-        let _ = win.set_size(Size::Logical(LogicalSize::new(width, height)));
-        let _ = win.navigate(parsed_url);
-        let _ = win.show();
-        let _ = win.set_focus();
-    } else {
-        let win = WebviewWindowBuilder::new(&app, &tab_id, WebviewUrl::External(parsed_url))
-            .title("Rode View")
-            .decorations(false)
-            .shadow(false)
-            .position(screen_x, screen_y)
-            .inner_size(width, height)
-            .resizable(true)
-            .visible(true)
-            .build()
-            .map_err(|e| format!("Failed to create webview window: {}", e))?;
-        
-        let _ = win.show();
-        let _ = win.set_focus();
+    if let Ok(adb) = state.adblock_enabled.lock() {
+        if *adb {
+            let js = r#"
+            (function() {
+                const hide = () => {
+                    document.querySelectorAll('[id*="ad-"], [class*="ad-"], [id*="banner"], [class*="banner"], iframe[src*="ad"]').forEach(el => el.style.setProperty('display', 'none', 'important'));
+                };
+                hide();
+                setInterval(hide, 1500);
+            })();
+            "#;
+            let _ = wv.eval(js);
+        }
     }
 
-    tabs.insert(tab_id.clone(), url);
-    *active = Some(tab_id);
+    if let Ok(eco) = state.eco_enabled.lock() {
+        if *eco {
+            let js = r#"
+            (function() {
+                let style = document.getElementById('rode-eco-style');
+                if (!style) {
+                    style = document.createElement('style');
+                    style.id = 'rode-eco-style';
+                    style.textContent = '*, *::before, *::after { animation-duration: 0s !important; transition-duration: 0s !important; } video { max-width: 100% !important; }';
+                    document.head.appendChild(style);
+                }
+            })();
+            "#;
+            let _ = wv.eval(js);
+        }
+    }
+
     Ok(())
 }
 
 #[tauri::command]
-fn sync_tabs_geometry(
+fn sync_content_bounds(
     app: AppHandle,
-    state: tauri::State<BrowserState>,
     x: f64,
     y: f64,
     width: f64,
     height: f64,
 ) -> Result<(), String> {
-    let active = state.active_tab.lock().map_err(|e| e.to_string())?;
-    if let Some(ref tab_id) = *active {
-        if let Some(win) = app.get_webview_window(tab_id) {
-            let main_win = app.get_webview_window("main").ok_or("Main window not found")?;
-            let main_pos = main_win.outer_position().unwrap_or(tauri::PhysicalPosition::new(0, 0));
+    if let Some(wv) = app.get_webview("content_view") {
+        if let Some(main_win) = app.get_window("main") {
             let scale_factor = main_win.scale_factor().unwrap_or(1.0);
-
-            let screen_x = (main_pos.x as f64 / scale_factor) + x;
-            let screen_y = (main_pos.y as f64 / scale_factor) + y;
-
-            let _ = win.set_position(Position::Logical(LogicalPosition::new(screen_x, screen_y)));
-            let _ = win.set_size(Size::Logical(LogicalSize::new(width, height)));
+            let phys_pos = Position::Physical(PhysicalPosition::new(
+                (x * scale_factor) as i32,
+                (y * scale_factor) as i32,
+            ));
+            let phys_size = Size::Physical(PhysicalSize::new(
+                (width * scale_factor) as u32,
+                (height * scale_factor) as u32,
+            ));
+            let _ = wv.set_position(phys_pos);
+            let _ = wv.set_size(phys_size);
         }
     }
     Ok(())
 }
 
 #[tauri::command]
-fn switch_tab(
-    app: AppHandle,
-    state: tauri::State<BrowserState>,
-    tab_id: String,
-) -> Result<(), String> {
-    let mut active = state.active_tab.lock().map_err(|e| e.to_string())?;
-    if let Some(ref prev_id) = *active {
-        if prev_id != &tab_id {
-            if let Some(prev_win) = app.get_webview_window(prev_id) {
-                let _ = prev_win.hide();
-            }
-        }
-    }
-    if let Some(win) = app.get_webview_window(&tab_id) {
-        let _ = win.show();
-        let _ = win.set_focus();
-    }
-    *active = Some(tab_id);
-    Ok(())
-}
-
-#[tauri::command]
-fn hide_all_tabs(
-    app: AppHandle,
-    state: tauri::State<BrowserState>,
-) -> Result<(), String> {
-    let mut active = state.active_tab.lock().map_err(|e| e.to_string())?;
-    if let Some(ref id) = *active {
-        if let Some(win) = app.get_webview_window(id) {
-            let _ = win.hide();
-        }
-    }
-    *active = None;
-    Ok(())
-}
-
-#[tauri::command]
-fn close_tab_window(
-    app: AppHandle,
-    state: tauri::State<BrowserState>,
-    tab_id: String,
-) -> Result<(), String> {
-    if let Some(win) = app.get_webview_window(&tab_id) {
-        let _ = win.close();
-    }
-    let mut tabs = state.tabs.lock().map_err(|e| e.to_string())?;
-    tabs.remove(&tab_id);
-    let mut active = state.active_tab.lock().map_err(|e| e.to_string())?;
-    if active.as_ref() == Some(&tab_id) {
-        *active = None;
+fn go_back(app: AppHandle) -> Result<(), String> {
+    if let Some(wv) = app.get_webview("content_view") {
+        let _ = wv.eval("window.history.back()");
     }
     Ok(())
 }
 
 #[tauri::command]
-fn go_back_tab(app: AppHandle, tab_id: String) -> Result<(), String> {
-    if let Some(win) = app.get_webview_window(&tab_id) {
-        let _ = win.eval("window.history.back()");
+fn go_forward(app: AppHandle) -> Result<(), String> {
+    if let Some(wv) = app.get_webview("content_view") {
+        let _ = wv.eval("window.history.forward()");
     }
     Ok(())
 }
 
 #[tauri::command]
-fn go_forward_tab(app: AppHandle, tab_id: String) -> Result<(), String> {
-    if let Some(win) = app.get_webview_window(&tab_id) {
-        let _ = win.eval("window.history.forward()");
-    }
-    Ok(())
-}
-
-#[tauri::command]
-fn reload_tab(app: AppHandle, tab_id: String) -> Result<(), String> {
-    if let Some(win) = app.get_webview_window(&tab_id) {
-        let _ = win.eval("window.location.reload()");
+fn reload_content(app: AppHandle) -> Result<(), String> {
+    if let Some(wv) = app.get_webview("content_view") {
+        let _ = wv.eval("window.location.reload()");
     }
     Ok(())
 }
@@ -252,31 +277,21 @@ fn toggle_adblock(app: AppHandle, state: tauri::State<BrowserState>, enabled: bo
     let mut adb = state.adblock_enabled.lock().map_err(|e| e.to_string())?;
     *adb = enabled;
 
-    let js = if enabled {
-        r#"
-        (function() {
-            const selectors = '[id*="ad-"], [class*="ad-"], [id*="banner"], [class*="banner"], iframe[src*="ad"], iframe[src*="doubleclick"]';
-            const hideAds = () => {
-                document.querySelectorAll(selectors).forEach(el => el.style.setProperty('display', 'none', 'important'));
-            };
-            hideAds();
-            setInterval(hideAds, 1500);
-        })();
-        "#
-    } else {
-        ""
-    };
-
-    if !js.is_empty() {
-        let active = state.active_tab.lock().map_err(|e| e.to_string())?;
-        if let Some(ref tab_id) = *active {
-            if let Some(win) = app.get_webview_window(tab_id) {
-                let _ = win.eval(js);
-            }
+    if let Some(wv) = app.get_webview("content_view") {
+        if enabled {
+            let js = r#"
+            (function() {
+                const hide = () => {
+                    document.querySelectorAll('[id*="ad-"], [class*="ad-"], [id*="banner"], [class*="banner"], iframe[src*="ad"]').forEach(el => el.style.setProperty('display', 'none', 'important'));
+                };
+                hide();
+                setInterval(hide, 1500);
+            })();
+            "#;
+            let _ = wv.eval(js);
         }
     }
-
-    Ok(*adb)
+    Ok(enabled)
 }
 
 #[tauri::command]
@@ -284,43 +299,39 @@ fn toggle_eco_mode(app: AppHandle, state: tauri::State<BrowserState>, enabled: b
     let mut eco = state.eco_enabled.lock().map_err(|e| e.to_string())?;
     *eco = enabled;
 
-    let js = if enabled {
-        r#"
-        (function() {
-            let style = document.getElementById('rode-eco-style');
-            if (!style) {
-                style = document.createElement('style');
-                style.id = 'rode-eco-style';
-                style.textContent = '*, *::before, *::after { animation-duration: 0s !important; transition-duration: 0s !important; } video { max-width: 100% !important; }';
-                document.head.appendChild(style);
-            }
-        })();
-        "#
-    } else {
-        r#"
-        (function() {
-            let style = document.getElementById('rode-eco-style');
-            if (style) style.remove();
-        })();
-        "#
-    };
-
-    let active = state.active_tab.lock().map_err(|e| e.to_string())?;
-    if let Some(ref tab_id) = *active {
-        if let Some(win) = app.get_webview_window(tab_id) {
-            let _ = win.eval(js);
-        }
+    if let Some(wv) = app.get_webview("content_view") {
+        let js = if enabled {
+            r#"
+            (function() {
+                let style = document.getElementById('rode-eco-style');
+                if (!style) {
+                    style = document.createElement('style');
+                    style.id = 'rode-eco-style';
+                    style.textContent = '*, *::before, *::after { animation-duration: 0s !important; transition-duration: 0s !important; } video { max-width: 100% !important; }';
+                    document.head.appendChild(style);
+                }
+            })();
+            "#
+        } else {
+            r#"
+            (function() {
+                let style = document.getElementById('rode-eco-style');
+                if (style) style.remove();
+            })();
+            "#
+        };
+        let _ = wv.eval(js);
     }
-
-    Ok(*eco)
+    Ok(enabled)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .manage(BrowserState {
+            tab_urls: Mutex::new(HashMap::new()),
             active_tab: Mutex::new(None),
-            tabs: Mutex::new(HashMap::new()),
+            current_url: Mutex::new(String::new()),
             adblock_enabled: Mutex::new(true),
             eco_enabled: Mutex::new(false),
         })
@@ -342,14 +353,12 @@ pub fn run() {
             minimize_window,
             toggle_maximize_window,
             close_window,
-            open_in_tab,
-            sync_tabs_geometry,
-            switch_tab,
-            hide_all_tabs,
-            close_tab_window,
-            go_back_tab,
-            go_forward_tab,
-            reload_tab,
+            init_content_view,
+            navigate_content,
+            sync_content_bounds,
+            go_back,
+            go_forward,
+            reload_content,
             toggle_adblock,
             toggle_eco_mode
         ])

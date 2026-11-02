@@ -75,80 +75,60 @@ class NativeBridge {
     }
   }
 
-  static async openInTab(tabId, url, x, y, width, height) {
+  static async initContentView(x, y, width, height) {
     if (this.invoke) {
       try {
-        await this.invoke('open_in_tab', { tabId, url, x, y, width, height });
+        await this.invoke('init_content_view', { x, y, width, height });
       } catch (e) {
-        console.error('Error open_in_tab:', e);
+        console.error('Error init_content_view:', e);
       }
     }
   }
 
-  static async syncTabsGeometry(x, y, width, height) {
+  static async navigateContent(tabId, url, x, y, width, height) {
     if (this.invoke) {
       try {
-        await this.invoke('sync_tabs_geometry', { x, y, width, height });
+        await this.invoke('navigate_content', { tabId, url, x, y, width, height });
       } catch (e) {
-        console.error(e);
+        console.error('Error navigate_content:', e);
       }
     }
   }
 
-  static async switchTab(tabId) {
+  static async syncContentBounds(x, y, width, height) {
     if (this.invoke) {
       try {
-        await this.invoke('switch_tab', { tabId });
+        await this.invoke('sync_content_bounds', { x, y, width, height });
       } catch (e) {
-        console.error('Error switch_tab:', e);
+        console.error('Error sync_content_bounds:', e);
       }
     }
   }
 
-  static async hideAllTabs() {
+  static async goBack() {
     if (this.invoke) {
       try {
-        await this.invoke('hide_all_tabs');
-      } catch (e) {
-        console.error(e);
-      }
-    }
-  }
-
-  static async closeTabWindow(tabId) {
-    if (this.invoke) {
-      try {
-        await this.invoke('close_tab_window', { tabId });
-      } catch (e) {
-        console.error('Error close_tab_window:', e);
-      }
-    }
-  }
-
-  static async goBack(tabId) {
-    if (this.invoke) {
-      try {
-        await this.invoke('go_back_tab', { tabId });
+        await this.invoke('go_back');
       } catch (e) {
         console.error(e);
       }
     }
   }
 
-  static async goForward(tabId) {
+  static async goForward() {
     if (this.invoke) {
       try {
-        await this.invoke('go_forward_tab', { tabId });
+        await this.invoke('go_forward');
       } catch (e) {
         console.error(e);
       }
     }
   }
 
-  static async reload(tabId) {
+  static async reload() {
     if (this.invoke) {
       try {
-        await this.invoke('reload_tab', { tabId });
+        await this.invoke('reload_content');
       } catch (e) {
         console.error(e);
       }
@@ -412,6 +392,15 @@ class BrowserEngine {
   }
 
   async init() {
+    const bounds = this.getViewportBounds();
+    await NativeBridge.initContentView(bounds.x, bounds.y, bounds.width, bounds.height);
+
+    if (window.__TAURI__?.event?.listen) {
+      window.__TAURI__.event.listen('content_page_loaded', () => {
+        this.finishProgress();
+      });
+    }
+
     const initialUrl = await NativeBridge.getInitialUrl();
     this.createTab(initialUrl || 'about:home');
 
@@ -419,7 +408,7 @@ class BrowserEngine {
       const activeTab = this.tabs.get(this.activeTabId);
       if (activeTab && activeTab.url !== 'about:home') {
         const bounds = this.getViewportBounds();
-        NativeBridge.syncTabsGeometry(bounds.x, bounds.y, bounds.width, bounds.height);
+        NativeBridge.syncContentBounds(bounds.x, bounds.y, bounds.width, bounds.height);
       }
     });
   }
@@ -452,7 +441,8 @@ class BrowserEngine {
       this.updateSecurityBadge('about:home');
       this.updateOmniboxFavicon(null);
       this.updateBookmarkButton('about:home');
-      NativeBridge.hideAllTabs();
+      const bounds = this.getViewportBounds();
+      NativeBridge.navigateContent(activeTab.id, 'about:home', bounds.x, bounds.y, bounds.width, bounds.height);
     } else {
       this.speedDial.style.display = 'none';
       this.omnibox.value = activeTab.url;
@@ -462,7 +452,7 @@ class BrowserEngine {
 
       this.triggerProgress();
       const bounds = this.getViewportBounds();
-      NativeBridge.openInTab(activeTab.id, activeTab.url, bounds.x, bounds.y, bounds.width, bounds.height);
+      NativeBridge.navigateContent(activeTab.id, activeTab.url, bounds.x, bounds.y, bounds.width, bounds.height);
     }
   }
 
@@ -477,7 +467,6 @@ class BrowserEngine {
 
     tab.tabElement.remove();
     this.tabs.delete(id);
-    NativeBridge.closeTabWindow(id);
 
     if (this.activeTabId === id) {
       const remainingIds = Array.from(this.tabs.keys());
@@ -570,7 +559,7 @@ class BrowserEngine {
     StorageManager.addHistory({ title: activeTab.title, url });
 
     const bounds = this.getViewportBounds();
-    NativeBridge.openInTab(activeTab.id, url, bounds.x, bounds.y, bounds.width, bounds.height);
+    NativeBridge.navigateContent(activeTab.id, url, bounds.x, bounds.y, bounds.width, bounds.height);
   }
 
   openModal(title, renderContent) {
@@ -608,18 +597,16 @@ class BrowserEngine {
 
     // Navigation buttons
     document.getElementById('btn-back')?.addEventListener('click', () => {
-      if (this.activeTabId) NativeBridge.goBack(this.activeTabId);
+      NativeBridge.goBack();
     });
 
     document.getElementById('btn-forward')?.addEventListener('click', () => {
-      if (this.activeTabId) NativeBridge.goForward(this.activeTabId);
+      NativeBridge.goForward();
     });
 
     document.getElementById('btn-reload')?.addEventListener('click', () => {
-      if (this.activeTabId) {
-        this.triggerProgress();
-        NativeBridge.reload(this.activeTabId);
-      }
+      this.triggerProgress();
+      NativeBridge.reload();
     });
 
     document.getElementById('btn-new-tab')?.addEventListener('click', () => {
