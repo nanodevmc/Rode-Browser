@@ -12,6 +12,7 @@
     "core:window:allow-maximize",
     "core:window:allow-toggle-maximize",
     "core:window:allow-start-dragging",
-    "core:webview:default"
+    "core:webview:default",
+    "core:event:default"
   ]
 }

@@ -517,7 +517,13 @@ class BrowserEngine {
       return trimmed;
     }
 
-    if (/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(\/.*)?$/.test(trimmed)) {
+    // Если введено доменное имя или IP-адрес (например yandex.ru, google.com, 192.168.1.1, localhost)
+    if (/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(\/.*)?$/.test(trimmed) || /^localhost(:\d+)?(\/.*)?$/i.test(trimmed) || /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?(\/.*)?$/.test(trimmed)) {
+      return `https://${trimmed}`;
+    }
+
+    // Если нет пробелов и есть слеш (например domain/path)
+    if (!trimmed.includes(' ') && trimmed.includes('.')) {
       return `https://${trimmed}`;
     }
 
@@ -575,10 +581,10 @@ class BrowserEngine {
   }
 
   initEvents() {
-    // Window dragging
+    // Window dragging: нативное событие + fallback mousedown
     const dragArea = document.getElementById('drag-titlebar');
     dragArea?.addEventListener('mousedown', (e) => {
-      if (e.target.closest('button') || e.target.closest('.tab-item')) return;
+      if (e.target.closest('button') || e.target.closest('.tab-item') || e.target.closest('.action-icon-btn')) return;
       NativeBridge.startDragging();
     });
 
