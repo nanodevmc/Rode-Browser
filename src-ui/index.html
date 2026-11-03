@@ -9,13 +9,15 @@
 </head>
 <body>
   <div class="browser-window">
-    <header class="window-titlebar" id="drag-titlebar" data-tauri-drag-region>
+    <header class="window-titlebar" id="drag-titlebar">
       <div class="tabs-scroll-area">
         <div id="tabs-container" class="tabs-container"></div>
         <button id="btn-new-tab" class="action-icon-btn icon-add-tab" title="Новая вкладка (Ctrl+T)">
           <span class="material-symbols-outlined">add</span>
         </button>
       </div>
+
+      <div class="titlebar-drag-spacer" data-tauri-drag-region></div>
 
       <div class="window-controls">
         <button id="btn-win-minimize" class="win-btn" title="Свернуть">

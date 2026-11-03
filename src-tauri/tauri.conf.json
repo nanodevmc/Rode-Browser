@@ -1,27 +1,14 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "RodeBrowser",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "identifier": "com.nanodev.rodebrowser",
   "build": {
     "frontendDist": "../src-ui"
   },
   "app": {
     "withGlobalTauri": true,
-    "windows": [
-      {
-        "label": "main",
-        "title": "Rode Browser",
-        "width": 1100,
-        "height": 720,
-        "minWidth": 640,
-        "minHeight": 480,
-        "resizable": true,
-        "fullscreen": false,
-        "decorations": false,
-        "transparent": false
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }

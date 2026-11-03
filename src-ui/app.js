@@ -36,6 +36,12 @@ class NativeBridge {
   }
 
   static async startDragging() {
+    try {
+      if (window.__TAURI__?.window?.getCurrentWindow) {
+        await window.__TAURI__.window.getCurrentWindow().startDragging();
+        return;
+      }
+    } catch {}
     if (this.invoke) {
       try {
         await this.invoke('drag_window');
@@ -46,6 +52,12 @@ class NativeBridge {
   }
 
   static async minimizeWindow() {
+    try {
+      if (window.__TAURI__?.window?.getCurrentWindow) {
+        await window.__TAURI__.window.getCurrentWindow().minimize();
+        return;
+      }
+    } catch {}
     if (this.invoke) {
       try {
         await this.invoke('minimize_window');
@@ -56,6 +68,12 @@ class NativeBridge {
   }
 
   static async toggleMaximizeWindow() {
+    try {
+      if (window.__TAURI__?.window?.getCurrentWindow) {
+        await window.__TAURI__.window.getCurrentWindow().toggleMaximize();
+        return;
+      }
+    } catch {}
     if (this.invoke) {
       try {
         await this.invoke('toggle_maximize_window');
@@ -66,6 +84,12 @@ class NativeBridge {
   }
 
   static async closeWindow() {
+    try {
+      if (window.__TAURI__?.window?.getCurrentWindow) {
+        await window.__TAURI__.window.getCurrentWindow().close();
+        return;
+      }
+    } catch {}
     if (this.invoke) {
       try {
         await this.invoke('close_window');
@@ -391,18 +415,30 @@ class BrowserEngine {
     }, 250);
   }
 
-  async init() {
-    const bounds = this.getViewportBounds();
-    await NativeBridge.initContentView(bounds.x, bounds.y, bounds.width, bounds.height);
+  init() {
+    // 1. Создаем начальную вкладку синхронно СРАЗУ, чтобы DOM, вкладки и начальная страница были готовы мгновенно
+    this.createTab('about:home');
 
-    if (window.__TAURI__?.event?.listen) {
-      window.__TAURI__.event.listen('content_page_loaded', () => {
-        this.finishProgress();
-      });
-    }
+    // 2. В фоне без блокировки синхронизируем bounds и нативные слушатели
+    (async () => {
+      try {
+        const bounds = this.getViewportBounds();
+        await NativeBridge.initContentView(bounds.x, bounds.y, bounds.width, bounds.height);
 
-    const initialUrl = await NativeBridge.getInitialUrl();
-    this.createTab(initialUrl || 'about:home');
+        if (window.__TAURI__?.event?.listen) {
+          window.__TAURI__.event.listen('content_page_loaded', () => {
+            this.finishProgress();
+          });
+        }
+
+        const initialUrl = await NativeBridge.getInitialUrl();
+        if (initialUrl && initialUrl !== 'about:home') {
+          this.navigateActiveTab(initialUrl);
+        }
+      } catch (e) {
+        console.error('Async init error:', e);
+      }
+    })();
 
     window.addEventListener('resize', () => {
       const activeTab = this.tabs.get(this.activeTabId);
@@ -517,12 +553,27 @@ class BrowserEngine {
       return trimmed;
     }
 
-    // Если введено доменное имя или IP-адрес (например yandex.ru, google.com, 192.168.1.1, localhost)
-    if (/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(\/.*)?$/.test(trimmed) || /^localhost(:\d+)?(\/.*)?$/i.test(trimmed) || /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?(\/.*)?$/.test(trimmed)) {
+    // Если начинается с www.
+    if (/^www\.[a-zA-Z0-9.-]+/i.test(trimmed)) {
       return `https://${trimmed}`;
     }
 
-    // Если нет пробелов и есть слеш (например domain/path)
+    // Если введено доменное имя с зоной (yandex.ru, google.com, youtube.com/feed, domain:port)
+    if (/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(:\d+)?(\/.*)?$/i.test(trimmed)) {
+      return `https://${trimmed}`;
+    }
+
+    // Если localhost с портом или без
+    if (/^localhost(:\d+)?(\/.*)?$/i.test(trimmed)) {
+      return `http://${trimmed}`;
+    }
+
+    // Если IPv4 адрес
+    if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?(\/.*)?$/.test(trimmed)) {
+      return `http://${trimmed}`;
+    }
+
+    // Если нет пробелов и есть точка (например domain/path)
     if (!trimmed.includes(' ') && trimmed.includes('.')) {
       return `https://${trimmed}`;
     }

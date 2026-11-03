@@ -1,7 +1,8 @@
 use std::env;
 use std::sync::Mutex;
 use std::collections::HashMap;
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewBuilder, Position, PhysicalPosition, Size, PhysicalSize, Emitter};
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewBuilder, Position, LogicalPosition, Size, LogicalSize, Emitter};
+use tauri::window::WindowBuilder;
 
 #[cfg(target_os = "windows")]
 unsafe extern "C" {
@@ -13,7 +14,6 @@ unsafe extern "C" {
 struct BrowserState {
     tab_urls: Mutex<HashMap<String, String>>,
     active_tab: Mutex<Option<String>>,
-    current_url: Mutex<String>,
     adblock_enabled: Mutex<bool>,
     eco_enabled: Mutex<bool>,
 }
@@ -93,39 +93,17 @@ fn init_content_view(
     width: f64,
     height: f64,
 ) -> Result<(), String> {
-    let main_win = app.get_window("main").ok_or("Main window not found")?;
-    let scale_factor = main_win.scale_factor().unwrap_or(1.0);
-
-    let phys_pos = Position::Physical(PhysicalPosition::new(
-        (x * scale_factor) as i32,
-        (y * scale_factor) as i32,
-    ));
-    let phys_size = Size::Physical(PhysicalSize::new(
-        (width * scale_factor) as u32,
-        (height * scale_factor) as u32,
-    ));
-
     if let Some(wv) = app.get_webview("content_view") {
-        let _ = wv.set_position(phys_pos);
-        let _ = wv.set_size(phys_size);
-    } else {
-        let builder = WebviewBuilder::new(
-            "content_view",
-            WebviewUrl::External("about:blank".parse().unwrap())
-        ).auto_resize();
-
-        let wv = main_win.add_child(builder, phys_pos, phys_size)
-            .map_err(|e| format!("Failed to create content webview: {}", e))?;
-        
-        let _ = wv.hide();
+        let _ = wv.set_position(Position::Logical(LogicalPosition::new(x, y)));
+        let _ = wv.set_size(Size::Logical(LogicalSize::new(width, height)));
     }
     Ok(())
 }
 
 #[tauri::command]
-fn navigate_content(
+async fn navigate_content(
     app: AppHandle,
-    state: tauri::State<BrowserState>,
+    state: tauri::State<'_, BrowserState>,
     tab_id: String,
     url: String,
     x: f64,
@@ -133,18 +111,6 @@ fn navigate_content(
     width: f64,
     height: f64,
 ) -> Result<(), String> {
-    let main_win = app.get_window("main").ok_or("Main window not found")?;
-    let scale_factor = main_win.scale_factor().unwrap_or(1.0);
-
-    let phys_pos = Position::Physical(PhysicalPosition::new(
-        (x * scale_factor) as i32,
-        (y * scale_factor) as i32,
-    ));
-    let phys_size = Size::Physical(PhysicalSize::new(
-        (width * scale_factor) as u32,
-        (height * scale_factor) as u32,
-    ));
-
     {
         let mut tabs = state.tab_urls.lock().map_err(|e| e.to_string())?;
         tabs.insert(tab_id.clone(), url.clone());
@@ -161,24 +127,45 @@ fn navigate_content(
 
     let parsed_url: tauri::Url = tauri::Url::parse(&url).map_err(|e| e.to_string())?;
 
-    let wv = match app.get_webview("content_view") {
-        Some(w) => {
-            let _ = w.set_position(phys_pos);
-            let _ = w.set_size(phys_size);
-            let _ = w.navigate(parsed_url);
-            let _ = w.show();
-            let _ = w.set_focus();
-            w
+    if let Some(wv) = app.get_webview("content_view") {
+        let _ = wv.set_position(Position::Logical(LogicalPosition::new(x, y)));
+        let _ = wv.set_size(Size::Logical(LogicalSize::new(width, height)));
+        let _ = wv.navigate(parsed_url);
+        let _ = wv.show();
+        let _ = wv.set_focus();
+
+        if let Ok(adb) = state.adblock_enabled.lock() {
+            if *adb {
+                let js = r#"
+                (function() {
+                    const hide = () => {
+                        document.querySelectorAll('[id*="ad-"], [class*="ad-"], [id*="banner"], [class*="banner"], iframe[src*="ad"]').forEach(el => el.style.setProperty('display', 'none', 'important'));
+                    };
+                    hide();
+                    setInterval(hide, 1500);
+                })();
+                "#;
+                let _ = wv.eval(js);
+            }
         }
-        None => {
-            let builder = WebviewBuilder::new("content_view", WebviewUrl::External(parsed_url)).auto_resize();
-            let created = main_win.add_child(builder, phys_pos, phys_size)
-                .map_err(|e| format!("Failed to build content webview: {}", e))?;
-            let _ = created.show();
-            let _ = created.set_focus();
-            created
+
+        if let Ok(eco) = state.eco_enabled.lock() {
+            if *eco {
+                let js = r#"
+                (function() {
+                    let style = document.getElementById('rode-eco-style');
+                    if (!style) {
+                        style = document.createElement('style');
+                        style.id = 'rode-eco-style';
+                        style.textContent = '*, *::before, *::after { animation-duration: 0s !important; transition-duration: 0s !important; } video { max-width: 100% !important; }';
+                        document.head.appendChild(style);
+                    }
+                })();
+                "#;
+                let _ = wv.eval(js);
+            }
         }
-    };
+    }
 
     let app_clone = app.clone();
     let url_clone = url.clone();
@@ -186,38 +173,6 @@ fn navigate_content(
         std::thread::sleep(std::time::Duration::from_millis(150));
         let _ = app_clone.emit("content_page_loaded", url_clone);
     });
-
-    if let Ok(adb) = state.adblock_enabled.lock() {
-        if *adb {
-            let js = r#"
-            (function() {
-                const hide = () => {
-                    document.querySelectorAll('[id*="ad-"], [class*="ad-"], [id*="banner"], [class*="banner"], iframe[src*="ad"]').forEach(el => el.style.setProperty('display', 'none', 'important'));
-                };
-                hide();
-                setInterval(hide, 1500);
-            })();
-            "#;
-            let _ = wv.eval(js);
-        }
-    }
-
-    if let Ok(eco) = state.eco_enabled.lock() {
-        if *eco {
-            let js = r#"
-            (function() {
-                let style = document.getElementById('rode-eco-style');
-                if (!style) {
-                    style = document.createElement('style');
-                    style.id = 'rode-eco-style';
-                    style.textContent = '*, *::before, *::after { animation-duration: 0s !important; transition-duration: 0s !important; } video { max-width: 100% !important; }';
-                    document.head.appendChild(style);
-                }
-            })();
-            "#;
-            let _ = wv.eval(js);
-        }
-    }
 
     Ok(())
 }
@@ -231,19 +186,8 @@ fn sync_content_bounds(
     height: f64,
 ) -> Result<(), String> {
     if let Some(wv) = app.get_webview("content_view") {
-        if let Some(main_win) = app.get_window("main") {
-            let scale_factor = main_win.scale_factor().unwrap_or(1.0);
-            let phys_pos = Position::Physical(PhysicalPosition::new(
-                (x * scale_factor) as i32,
-                (y * scale_factor) as i32,
-            ));
-            let phys_size = Size::Physical(PhysicalSize::new(
-                (width * scale_factor) as u32,
-                (height * scale_factor) as u32,
-            ));
-            let _ = wv.set_position(phys_pos);
-            let _ = wv.set_size(phys_size);
-        }
+        let _ = wv.set_position(Position::Logical(LogicalPosition::new(x, y)));
+        let _ = wv.set_size(Size::Logical(LogicalSize::new(width, height)));
     }
     Ok(())
 }
@@ -331,7 +275,6 @@ pub fn run() {
         .manage(BrowserState {
             tab_urls: Mutex::new(HashMap::new()),
             active_tab: Mutex::new(None),
-            current_url: Mutex::new(String::new()),
             adblock_enabled: Mutex::new(true),
             eco_enabled: Mutex::new(false),
         })
@@ -343,6 +286,37 @@ pub fn run() {
                         .build(),
                 )?;
             }
+
+            let width = 1100.0;
+            let height = 720.0;
+
+            let window = WindowBuilder::new(app, "main")
+                .title("Rode Browser")
+                .inner_size(width, height)
+                .min_inner_size(640.0, 480.0)
+                .decorations(false)
+                .resizable(true)
+                .build()?;
+
+            let _ui_webview = window.add_child(
+                WebviewBuilder::new("main", WebviewUrl::App(Default::default()))
+                    .auto_resize(),
+                LogicalPosition::new(0.0, 0.0),
+                LogicalSize::new(width, height),
+            )?;
+
+            let content_webview = window.add_child(
+                WebviewBuilder::new(
+                    "content_view",
+                    WebviewUrl::External("about:blank".parse().unwrap()),
+                )
+                .auto_resize(),
+                LogicalPosition::new(0.0, 114.0),
+                LogicalSize::new(width, height - 114.0),
+            )?;
+
+            let _ = content_webview.hide();
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

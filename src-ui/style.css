@@ -61,14 +61,21 @@ body {
   display: flex;
   align-items: center;
   gap: 4px;
-  flex: 1;
+  max-width: 80%;
   overflow-x: auto;
   overflow-y: hidden;
   height: 100%;
   scrollbar-width: none;
+  -webkit-app-region: no-drag;
 }
 .tabs-scroll-area::-webkit-scrollbar {
   display: none;
+}
+
+.titlebar-drag-spacer {
+  flex: 1;
+  height: 100%;
+  cursor: default;
 }
 
 .tabs-container {
@@ -181,6 +188,7 @@ body {
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
+  -webkit-app-region: no-drag;
 }
 
 .action-icon-btn:hover {
@@ -214,6 +222,7 @@ body {
   border: none;
   color: var(--text-secondary);
   cursor: pointer;
+  -webkit-app-region: no-drag;
 }
 
 .win-btn:hover {
