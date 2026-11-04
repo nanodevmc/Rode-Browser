@@ -1,5 +1,13 @@
 # Журнал сборок NanoBrowser
 
+## [1.0.5] - 2026-11-04
+- Успешно собран релиз `v1.0.5` (GitHub Actions CI/CD).
+- Инсталлятор `RodeBrowser_1.0.5_Setup.exe` (1.47 МБ) сохранен на Рабочий стол (`C:\Users\nanodev\Desktop\RodeBrowser_1.0.5_Setup.exe`).
+- Внедрено:
+  - Нативный хук `on_page_load` в Rust (`WebviewBuilder`) для автоматической синхронизации URL и заголовка вкладки при кликах по ссылкам внутри сайтов (событие `content_url_changed`).
+  - Google Autocomplete: обход политики CORS в WebView2 через высокоскоростной JSONP (`<script>` injection) — поисковые подсказки выводятся мгновенно при вводе.
+  - Фирменная полигональная оригами-аватарка и брендовый баннер для `README.md`.
+
 ## [1.0.4] - 2026-11-04
 - Успешно собран релиз `v1.0.4` (GitHub Actions CI/CD).
 - Инсталлятор `RodeBrowser_1.0.4_Setup.exe` (1.33 МБ) сохранен на Рабочий стол (`C:\Users\nanodev\Desktop\RodeBrowser_1.0.4_Setup.exe`).
