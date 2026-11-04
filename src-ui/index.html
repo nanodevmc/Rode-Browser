@@ -121,6 +121,11 @@
               <input type="text" id="dial-search-input" placeholder="Искать в Google или ввести адрес..." />
               <button id="dial-search-btn" class="dial-btn"><span class="material-symbols-outlined">search</span></button>
             </div>
+            <div class="home-banner-container">
+              <a href="https://github.com/nanodevmc/Rode-Browser" target="_blank" class="home-banner-card" title="Поставить звёздочку на GitHub">
+                <img src="banner.png" alt="Rode Browser" class="home-banner-img" />
+              </a>
+            </div>
             <div class="tiles-grid">
               <div class="speed-tile" data-url="https://github.com">
                 <span class="material-symbols-outlined tile-icon">code</span>
@@ -183,6 +188,10 @@
           <span class="material-symbols-outlined">download</span>
           <span>Загрузки</span>
         </div>
+        <div class="settings-item" id="popup-passwords">
+          <span class="material-symbols-outlined">password</span>
+          <span>Пароли и автозаполнение</span>
+        </div>
         <div class="settings-divider"></div>
         <div class="settings-item" id="popup-set-default">
           <span class="material-symbols-outlined">verified</span>
@@ -196,6 +205,21 @@
         <div class="settings-item" id="popup-clear-data">
           <span class="material-symbols-outlined">delete_sweep</span>
           <span>Очистить историю и кэш</span>
+        </div>
+      </div>
+
+      <!-- Password Save Prompt Bar -->
+      <div id="password-prompt" class="password-prompt-bar" style="display: none;">
+        <div class="prompt-info">
+          <span class="material-symbols-outlined prompt-icon">key</span>
+          <div class="prompt-text-block">
+            <span class="prompt-title">Сохранить пароль?</span>
+            <span id="prompt-desc" class="prompt-desc">для google.com</span>
+          </div>
+        </div>
+        <div class="prompt-actions">
+          <button id="btn-save-pwd" class="glass-pill-btn active sm">Сохранить</button>
+          <button id="btn-dismiss-pwd" class="glass-pill-btn sm">Не сейчас</button>
         </div>
       </div>
 

@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "RodeBrowser",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "identifier": "com.nanodev.rodebrowser",
   "build": {
     "frontendDist": "../src-ui"
@@ -20,11 +20,14 @@
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
+      "icons/icon.png",
       "icons/icon.ico"
     ],
     "windows": {
       "nsis": {
-        "installMode": "currentUser"
+        "installMode": "currentUser",
+        "installerIcon": "icons/icon.ico",
+        "headerImage": "icons/128x128.png"
       }
     }
   }

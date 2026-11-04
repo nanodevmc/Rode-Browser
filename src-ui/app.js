@@ -180,6 +180,46 @@ class NativeBridge {
     }
     return enabled;
   }
+
+  static hideContentView() {
+    if (this.invoke) {
+      try {
+        this.invoke('hide_content_view');
+      } catch (e) {
+        console.error(e);
+      }
+    }
+  }
+
+  static showContentView() {
+    if (this.invoke) {
+      try {
+        this.invoke('show_content_view');
+      } catch (e) {
+        console.error(e);
+      }
+    }
+  }
+
+  static openDownloadsFolder() {
+    if (this.invoke) {
+      try {
+        this.invoke('open_downloads_folder');
+      } catch (e) {
+        console.error(e);
+      }
+    }
+  }
+
+  static async autofillCredentials(username, password) {
+    if (this.invoke) {
+      try {
+        await this.invoke('autofill_credentials', { username, password });
+      } catch (e) {
+        console.error(e);
+      }
+    }
+  }
 }
 
 class ToastNotification {
@@ -214,6 +254,32 @@ class StorageManager {
   static clearAll() {
     localStorage.removeItem('nano_history');
     localStorage.removeItem('nano_bookmarks');
+    localStorage.removeItem('nano_passwords');
+  }
+
+  static getPasswords() {
+    try {
+      return JSON.parse(localStorage.getItem('nano_passwords') || '[]');
+    } catch {
+      return [];
+    }
+  }
+
+  static savePassword(entry) {
+    const list = this.getPasswords();
+    const existingIndex = list.findIndex(p => p.origin === entry.origin && p.username === entry.username);
+    if (existingIndex >= 0) {
+      list[existingIndex] = { ...list[existingIndex], ...entry, time: Date.now() };
+    } else {
+      list.unshift({ ...entry, id: 'pwd_' + Date.now(), time: Date.now() });
+    }
+    localStorage.setItem('nano_passwords', JSON.stringify(list));
+  }
+
+  static removePassword(id) {
+    let list = this.getPasswords();
+    list = list.filter(p => p.id !== id);
+    localStorage.setItem('nano_passwords', JSON.stringify(list));
   }
 
   static getBookmarks() {
@@ -426,23 +492,30 @@ class BrowserEngine {
 
   triggerProgress() {
     this.progressBar.classList.add('loading');
-    this.progressBar.style.width = '40%';
-    setTimeout(() => {
+    this.progressBar.style.width = '35%';
+    clearTimeout(this._progressTimer);
+    this._progressTimer = setTimeout(() => {
       if (this.progressBar.classList.contains('loading')) {
-        this.progressBar.style.width = '80%';
+        this.progressBar.style.width = '75%';
       }
-    }, 200);
-    setTimeout(() => {
-      this.finishProgress();
-    }, 700);
+    }, 250);
   }
 
   finishProgress() {
+    clearTimeout(this._progressTimer);
     this.progressBar.style.width = '100%';
     setTimeout(() => {
       this.progressBar.classList.remove('loading');
       this.progressBar.style.width = '0%';
     }, 250);
+  }
+
+  showPasswordPrompt(creds) {
+    this.pendingCredentials = creds;
+    const prompt = document.getElementById('password-prompt');
+    const text = document.getElementById('pwd-prompt-text');
+    if (text) text.textContent = `Сохранить пароль для ${creds.origin} (${creds.username})?`;
+    if (prompt) prompt.style.display = 'flex';
   }
 
   init() {
@@ -456,14 +529,45 @@ class BrowserEngine {
         await NativeBridge.initContentView(bounds.x, bounds.y, bounds.width, bounds.height);
 
         if (window.__TAURI__?.event?.listen) {
-          window.__TAURI__.event.listen('content_page_loaded', () => {
+          window.__TAURI__.event.listen('content_page_started', (event) => {
+            const startedUrl = typeof event.payload === 'string' ? event.payload : event.payload?.url;
+            if (startedUrl && startedUrl !== 'about:blank' && startedUrl !== 'about:home') {
+              this.omnibox.value = startedUrl;
+              this.updateSecurityBadge(startedUrl);
+            }
+            this.triggerProgress();
+          });
+
+          window.__TAURI__.event.listen('content_page_finished', () => {
             this.finishProgress();
           });
+
           window.__TAURI__.event.listen('content_url_changed', (event) => {
             const newUrl = typeof event.payload === 'string' ? event.payload : event.payload?.url;
             if (newUrl && newUrl !== 'about:blank' && newUrl !== 'about:home') {
               this.onInternalNavigated(newUrl);
+              // Autofill сохраненных паролей для домена
+              try {
+                const origin = new URL(newUrl).origin;
+                const passwords = StorageManager.getPasswords();
+                const match = passwords.find((p) => p.origin === origin);
+                if (match) {
+                  NativeBridge.autofillCredentials(match.username, match.password);
+                }
+              } catch {}
             }
+          });
+
+          window.__TAURI__.event.listen('credentials_detected', (event) => {
+            const creds = event.payload;
+            if (creds && creds.username && creds.password) {
+              this.showPasswordPrompt(creds);
+            }
+          });
+
+          window.__TAURI__.event.listen('download_finished', (event) => {
+            const fileName = event.payload || 'Файл';
+            ToastNotification.show(`Файл загружен: ${fileName}`);
           });
         }
 
@@ -677,11 +781,77 @@ class BrowserEngine {
     this.modalBody.innerHTML = '';
     renderContent(this.modalBody);
     this.modalContainer.style.display = 'flex';
+    NativeBridge.hideContentView();
   }
 
   closeModal() {
     this.modalContainer.style.display = 'none';
     this.settingsPopup.style.display = 'none';
+    const activeTab = this.tabs.get(this.activeTabId);
+    if (activeTab && activeTab.url !== 'about:home') {
+      NativeBridge.showContentView();
+    }
+  }
+
+  openPasswordsModal() {
+    this.openModal('Сохранённые пароли', (body) => {
+      const list = StorageManager.getPasswords();
+      if (list.length === 0) {
+        body.innerHTML = '<div style="color: var(--text-muted); text-align: center; padding: 24px;">Нет сохранённых паролей</div>';
+        return;
+      }
+      body.innerHTML = '';
+      list.forEach((entry) => {
+        const div = document.createElement('div');
+        div.className = 'modal-list-item';
+        div.style.display = 'flex';
+        div.style.alignItems = 'center';
+        div.style.justifyContent = 'space-between';
+        div.innerHTML = `
+          <div class="modal-item-info">
+            <span class="modal-item-title">${entry.origin}</span>
+            <span class="modal-item-sub">Логин: <b>${entry.username}</b></span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span class="pwd-val" style="font-family: monospace; font-size: 13px; color: var(--accent-neon);">••••••••</span>
+            <button class="action-icon-btn btn-show-pwd" title="Показать/скрыть" style="width: 28px; height: 28px;">
+              <span class="material-symbols-outlined" style="font-size: 16px;">visibility</span>
+            </button>
+            <button class="action-icon-btn btn-copy-pwd" title="Скопировать" style="width: 28px; height: 28px;">
+              <span class="material-symbols-outlined" style="font-size: 16px;">content_copy</span>
+            </button>
+            <button class="action-icon-btn btn-del-pwd" title="Удалить" style="width: 28px; height: 28px; color: #ff5555;">
+              <span class="material-symbols-outlined" style="font-size: 16px;">delete</span>
+            </button>
+          </div>
+        `;
+        let visible = false;
+        const pwdEl = div.querySelector('.pwd-val');
+        const eyeBtn = div.querySelector('.btn-show-pwd');
+        eyeBtn?.addEventListener('click', (e) => {
+          e.stopPropagation();
+          visible = !visible;
+          pwdEl.textContent = visible ? entry.password : '••••••••';
+          eyeBtn.querySelector('.material-symbols-outlined').textContent = visible ? 'visibility_off' : 'visibility';
+        });
+        div.querySelector('.btn-copy-pwd')?.addEventListener('click', (e) => {
+          e.stopPropagation();
+          navigator.clipboard.writeText(entry.password).then(() => {
+            ToastNotification.show('Пароль скопирован');
+          });
+        });
+        div.querySelector('.btn-del-pwd')?.addEventListener('click', (e) => {
+          e.stopPropagation();
+          StorageManager.removePassword(entry.id);
+          div.remove();
+          ToastNotification.show('Пароль удалён');
+          if (StorageManager.getPasswords().length === 0) {
+            body.innerHTML = '<div style="color: var(--text-muted); text-align: center; padding: 24px;">Нет сохранённых паролей</div>';
+          }
+        });
+        body.appendChild(div);
+      });
+    });
   }
 
   initEvents() {
@@ -791,16 +961,53 @@ class BrowserEngine {
     btnSettings?.addEventListener('click', (e) => {
       e.stopPropagation();
       const isVisible = this.settingsPopup.style.display === 'flex';
-      this.settingsPopup.style.display = isVisible ? 'none' : 'flex';
+      if (isVisible) {
+        this.settingsPopup.style.display = 'none';
+        const activeTab = this.tabs.get(this.activeTabId);
+        if (activeTab && activeTab.url !== 'about:home' && this.modalContainer.style.display !== 'flex') {
+          NativeBridge.showContentView();
+        }
+      } else {
+        this.settingsPopup.style.display = 'flex';
+        NativeBridge.hideContentView();
+      }
     });
 
     document.addEventListener('click', (e) => {
       if (!this.settingsPopup.contains(e.target) && e.target !== btnSettings) {
-        this.settingsPopup.style.display = 'none';
+        if (this.settingsPopup.style.display === 'flex') {
+          this.settingsPopup.style.display = 'none';
+          const activeTab = this.tabs.get(this.activeTabId);
+          if (activeTab && activeTab.url !== 'about:home' && this.modalContainer.style.display !== 'flex') {
+            NativeBridge.showContentView();
+          }
+        }
       }
       if (!this.suggestionsDropdown.contains(e.target) && e.target !== this.omnibox) {
         this.suggestionsDropdown.style.display = 'none';
       }
+    });
+
+    // Password Prompt Bar buttons
+    document.getElementById('btn-save-pwd')?.addEventListener('click', () => {
+      if (this.pendingCredentials) {
+        StorageManager.savePassword(this.pendingCredentials);
+        ToastNotification.show('Пароль сохранён');
+        this.pendingCredentials = null;
+      }
+      const prompt = document.getElementById('password-prompt');
+      if (prompt) prompt.style.display = 'none';
+    });
+
+    document.getElementById('btn-dismiss-pwd')?.addEventListener('click', () => {
+      this.pendingCredentials = null;
+      const prompt = document.getElementById('password-prompt');
+      if (prompt) prompt.style.display = 'none';
+    });
+
+    document.getElementById('popup-passwords')?.addEventListener('click', () => {
+      this.settingsPopup.style.display = 'none';
+      this.openPasswordsModal();
     });
 
     document.getElementById('popup-new-tab')?.addEventListener('click', () => {
@@ -931,11 +1138,20 @@ class BrowserEngine {
     document.getElementById('btn-downloads')?.addEventListener('click', () => {
       this.openModal('Загрузки', (body) => {
         body.innerHTML = `
-          <div style="display: flex; flex-direction: column; gap: 8px; align-items: center; padding: 20px; color: var(--text-secondary);">
-            <span class="material-symbols-outlined" style="font-size: 36px; color: var(--accent-neon);">folder_open</span>
-            <span style="font-size: 12px;">Папка: %USERPROFILE%\\Downloads</span>
+          <div style="display: flex; flex-direction: column; gap: 14px; align-items: center; padding: 24px; color: var(--text-secondary); text-align: center;">
+            <span class="material-symbols-outlined" style="font-size: 42px; color: var(--accent-neon);">download_done</span>
+            <div style="font-size: 13px; color: var(--text-primary); font-weight: 500;">Файлы сохраняются в системную папку Загрузки</div>
+            <div style="font-size: 11px; color: var(--text-muted);">WebView2 загружает файлы напрямую на полной скорости</div>
+            <button id="btn-open-dl-folder" style="margin-top: 8px; display: inline-flex; align-items: center; gap: 8px; padding: 10px 20px; border-radius: 10px; background: rgba(0, 255, 157, 0.12); color: var(--accent-neon); border: 1px solid rgba(0, 255, 157, 0.35); cursor: pointer; font-size: 12px; font-weight: 600; transition: all 0.2s ease;">
+              <span class="material-symbols-outlined" style="font-size: 18px;">folder_open</span>
+              <span>Открыть папку загрузок</span>
+            </button>
           </div>
         `;
+        body.querySelector('#btn-open-dl-folder')?.addEventListener('click', () => {
+          NativeBridge.openDownloadsFolder();
+          ToastNotification.show('Открыта папка Загрузки');
+        });
       });
     });
 

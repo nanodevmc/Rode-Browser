@@ -3,7 +3,7 @@ use std::sync::Mutex;
 use std::collections::HashMap;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewBuilder, Position, LogicalPosition, Size, LogicalSize, Emitter};
 use tauri::window::WindowBuilder;
-use tauri::webview::PageLoadEvent;
+use tauri::webview::{PageLoadEvent, DownloadEvent};
 
 #[cfg(target_os = "windows")]
 unsafe extern "C" {
@@ -135,21 +135,6 @@ async fn navigate_content(
         let _ = wv.show();
         let _ = wv.set_focus();
 
-        if let Ok(adb) = state.adblock_enabled.lock() {
-            if *adb {
-                let js = r#"
-                (function() {
-                    const hide = () => {
-                        document.querySelectorAll('[id*="ad-"], [class*="ad-"], [id*="banner"], [class*="banner"], iframe[src*="ad"]').forEach(el => el.style.setProperty('display', 'none', 'important'));
-                    };
-                    hide();
-                    setInterval(hide, 1500);
-                })();
-                "#;
-                let _ = wv.eval(js);
-            }
-        }
-
         if let Ok(eco) = state.eco_enabled.lock() {
             if *eco {
                 let js = r#"
@@ -167,13 +152,6 @@ async fn navigate_content(
             }
         }
     }
-
-    let app_clone = app.clone();
-    let url_clone = url.clone();
-    tauri::async_runtime::spawn(async move {
-        std::thread::sleep(std::time::Duration::from_millis(150));
-        let _ = app_clone.emit("content_page_loaded", url_clone);
-    });
 
     Ok(())
 }
@@ -270,6 +248,66 @@ fn toggle_eco_mode(app: AppHandle, state: tauri::State<BrowserState>, enabled: b
     Ok(enabled)
 }
 
+#[tauri::command]
+fn hide_content_view(app: AppHandle) -> Result<(), String> {
+    if let Some(wv) = app.get_webview("content_view") {
+        let _ = wv.hide();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn show_content_view(app: AppHandle) -> Result<(), String> {
+    if let Some(wv) = app.get_webview("content_view") {
+        let _ = wv.show();
+        let _ = wv.set_focus();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn open_downloads_folder() -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(user_profile) = env::var_os("USERPROFILE") {
+            let downloads = std::path::Path::new(&user_profile).join("Downloads");
+            let _ = std::process::Command::new("explorer").arg(downloads).spawn();
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn autofill_credentials(app: AppHandle, username: String, password: String) -> Result<(), String> {
+    if let Some(wv) = app.get_webview("content_view") {
+        let u_json = serde_json::to_string(&username).unwrap_or_default();
+        let p_json = serde_json::to_string(&password).unwrap_or_default();
+        let js = format!(r#"
+        (function() {{
+            try {{
+                const u = {u_json};
+                const p = {p_json};
+                const pwd = document.querySelector('input[type="password"]');
+                if (pwd) {{
+                    pwd.value = p;
+                    pwd.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    pwd.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                    const form = pwd.closest('form') || document;
+                    const usr = form.querySelector('input[type="text"], input[type="email"], input[name*="user"], input[name*="login"], input[name*="email"], input[id*="user"], input[id*="login"], input[id*="email"]');
+                    if (usr) {{
+                        usr.value = u;
+                        usr.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                        usr.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                    }}
+                }}
+            }} catch(e) {{}}
+        }})();
+        "#);
+        let _ = wv.eval(&js);
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -291,13 +329,18 @@ pub fn run() {
             let width = 1100.0;
             let height = 720.0;
 
-            let window = WindowBuilder::new(app, "main")
+            let mut builder = WindowBuilder::new(app, "main")
                 .title("Rode Browser")
                 .inner_size(width, height)
                 .min_inner_size(640.0, 480.0)
                 .decorations(false)
-                .resizable(true)
-                .build()?;
+                .resizable(true);
+
+            if let Some(icon) = app.default_window_icon() {
+                builder = builder.icon(icon.clone())?;
+            }
+
+            let window = builder.build()?;
 
             let _ui_webview = window.add_child(
                 WebviewBuilder::new("main", WebviewUrl::App(Default::default()))
@@ -306,17 +349,119 @@ pub fn run() {
                 LogicalSize::new(width, height),
             )?;
 
-            let app_handle = app.handle().clone();
+            let app_handle_nav = app.handle().clone();
+            let app_handle_load = app.handle().clone();
+            let app_handle_dl = app.handle().clone();
             let content_webview = window.add_child(
                 WebviewBuilder::new(
                     "content_view",
                     WebviewUrl::External("about:blank".parse().unwrap()),
                 )
+                .on_navigation(move |url| {
+                    if url.scheme() == "rode-auth" {
+                        let mut origin = String::new();
+                        let mut username = String::new();
+                        let mut password = String::new();
+                        for (key, val) in url.query_pairs() {
+                            match key.as_ref() {
+                                "origin" => origin = val.to_string(),
+                                "username" => username = val.to_string(),
+                                "password" => password = val.to_string(),
+                                _ => {}
+                            }
+                        }
+                        if !username.is_empty() && !password.is_empty() {
+                            let _ = app_handle_nav.emit("credentials_detected", serde_json::json!({
+                                "origin": origin,
+                                "username": username,
+                                "password": password,
+                            }));
+                        }
+                        return false;
+                    }
+                    true
+                })
                 .auto_resize()
                 .on_page_load(move |_wv, payload| {
-                    if let PageLoadEvent::Finished = payload.event() {
-                        let url = payload.url().to_string();
-                        let _ = app_handle.emit("content_url_changed", url);
+                    match payload.event() {
+                        PageLoadEvent::Started => {
+                            let url = payload.url().to_string();
+                            let _ = app_handle_load.emit("content_page_started", url);
+                        }
+                        PageLoadEvent::Finished => {
+                            let url = payload.url().to_string();
+                            let _ = app_handle_load.emit("content_page_finished", url.clone());
+                            let _ = app_handle_load.emit("content_url_changed", url);
+
+                            // Modern instant CSS AdBlock (Zero CPU timer overhead)
+                            let adb_js = r#"
+                            (function() {
+                                let style = document.getElementById('rode-adb-style');
+                                if (!style) {
+                                    style = document.createElement('style');
+                                    style.id = 'rode-adb-style';
+                                    style.textContent = '[id*="ad-"], [class*="ad-"], [id*="banner"], [class*="banner"], iframe[src*="ad"] { display: none !important; }';
+                                    (document.head || document.documentElement).appendChild(style);
+                                }
+                            })();
+                            "#;
+                            let _ = _wv.eval(adb_js);
+
+                            // Form login & password capture
+                            let auth_js = r#"
+                            (function() {
+                                if (window.__rodeAuthInjected) return;
+                                window.__rodeAuthInjected = true;
+                                function captureLogin(form) {
+                                    try {
+                                        const pwdInput = form ? form.querySelector('input[type="password"]') : document.querySelector('input[type="password"]');
+                                        if (!pwdInput || !pwdInput.value) return;
+                                        const root = form || pwdInput.closest('form') || document;
+                                        const userInput = root.querySelector('input[type="text"], input[type="email"], input[name*="user"], input[name*="login"], input[name*="email"], input[id*="user"], input[id*="login"], input[id*="email"]');
+                                        const username = userInput ? userInput.value : '';
+                                        const password = pwdInput.value;
+                                        if (password && password.length >= 2) {
+                                            const dummy = document.createElement('iframe');
+                                            dummy.style.display = 'none';
+                                            dummy.src = 'rode-auth://save?origin=' + encodeURIComponent(window.location.origin) + '&username=' + encodeURIComponent(username) + '&password=' + encodeURIComponent(password);
+                                            (document.body || document.documentElement).appendChild(dummy);
+                                            setTimeout(() => dummy.remove(), 1000);
+                                        }
+                                    } catch(e) {}
+                                }
+                                document.addEventListener('submit', function(e) { captureLogin(e.target); }, true);
+                                document.addEventListener('click', function(e) {
+                                    const btn = e.target.closest('button, input[type="submit"], [role="button"]');
+                                    if (btn) captureLogin(btn.closest('form'));
+                                }, true);
+                                document.addEventListener('keydown', function(e) {
+                                    if (e.key === 'Enter' && e.target && e.target.tagName === 'INPUT') {
+                                        captureLogin(e.target.closest('form'));
+                                    }
+                                }, true);
+                            })();
+                            "#;
+                            let _ = _wv.eval(auth_js);
+                        }
+                    }
+                })
+                .on_download(move |_wv, event| {
+                    match event {
+                        DownloadEvent::Requested { url: _, destination: _ } => {
+                            true
+                        }
+                        DownloadEvent::Finished { url: _, path, success } => {
+                            if success {
+                                let file_name = path
+                                    .as_ref()
+                                    .and_then(|p| p.file_name())
+                                    .map(|n| n.to_string_lossy().to_string())
+                                    .unwrap_or_else(|| "Файл".to_string());
+                                let _ = app_handle_dl.emit("download_finished", file_name);
+                            }
+                            true
+                        }
+                        _ => true,
                     }
                 }),
                 LogicalPosition::new(0.0, 114.0),
@@ -342,7 +487,11 @@ pub fn run() {
             go_forward,
             reload_content,
             toggle_adblock,
-            toggle_eco_mode
+            toggle_eco_mode,
+            hide_content_view,
+            show_content_view,
+            open_downloads_folder,
+            autofill_credentials
         ])
         .run(tauri::generate_context!())
         .expect("error while building tauri application");
