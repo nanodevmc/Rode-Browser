@@ -246,15 +246,45 @@ class StorageManager {
 }
 
 class GoogleSuggest {
-  static async fetch(query) {
-    if (!query || query.length < 2) return [];
-    try {
-      const res = await fetch(`https://suggestqueries.google.com/complete/search?client=chrome&q=${encodeURIComponent(query)}`);
-      const data = await res.json();
-      return (data && data[1]) ? data[1].slice(0, 5) : [];
-    } catch {
-      return [];
-    }
+  static fetch(query) {
+    if (!query || query.trim().length < 2) return Promise.resolve([]);
+    return new Promise((resolve) => {
+      const cbName = 'g_suggest_' + Math.random().toString(36).substring(2, 9);
+      let timeout = null;
+
+      const cleanup = () => {
+        clearTimeout(timeout);
+        delete window[cbName];
+        if (script.parentNode) script.parentNode.removeChild(script);
+      };
+
+      window[cbName] = (data) => {
+        cleanup();
+        if (data && Array.isArray(data[1])) {
+          const suggestions = data[1]
+            .map((item) => (Array.isArray(item) ? item[0] : item))
+            .filter((item) => typeof item === 'string' && item.trim().length > 0)
+            .slice(0, 5);
+          resolve(suggestions);
+        } else {
+          resolve([]);
+        }
+      };
+
+      const script = document.createElement('script');
+      script.src = `https://suggestqueries.google.com/complete/search?client=youtube&ds=yt&q=${encodeURIComponent(query.trim())}&callback=${cbName}`;
+      script.onerror = () => {
+        cleanup();
+        resolve([]);
+      };
+
+      timeout = setTimeout(() => {
+        cleanup();
+        resolve([]);
+      }, 1500);
+
+      document.body.appendChild(script);
+    });
   }
 }
 
@@ -429,6 +459,12 @@ class BrowserEngine {
           window.__TAURI__.event.listen('content_page_loaded', () => {
             this.finishProgress();
           });
+          window.__TAURI__.event.listen('content_url_changed', (event) => {
+            const newUrl = typeof event.payload === 'string' ? event.payload : event.payload?.url;
+            if (newUrl && newUrl !== 'about:blank' && newUrl !== 'about:home') {
+              this.onInternalNavigated(newUrl);
+            }
+          });
         }
 
         const initialUrl = await NativeBridge.getInitialUrl();
@@ -490,6 +526,23 @@ class BrowserEngine {
       const bounds = this.getViewportBounds();
       NativeBridge.navigateContent(activeTab.id, activeTab.url, bounds.x, bounds.y, bounds.width, bounds.height);
     }
+  }
+
+  onInternalNavigated(newUrl) {
+    const activeTab = this.tabs.get(this.activeTabId);
+    if (!activeTab || activeTab.url === 'about:home') return;
+
+    activeTab.url = newUrl;
+    activeTab.updateTitleFromUrl(newUrl);
+    activeTab.resolveFavicon(newUrl);
+
+    this.omnibox.value = newUrl;
+    this.updateSecurityBadge(newUrl);
+    this.updateOmniboxFavicon(activeTab.faviconUrl);
+    this.updateBookmarkButton(newUrl);
+    this.finishProgress();
+
+    StorageManager.addHistory({ title: activeTab.title, url: newUrl });
   }
 
   closeTab(id) {

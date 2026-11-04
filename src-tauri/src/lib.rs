@@ -3,6 +3,7 @@ use std::sync::Mutex;
 use std::collections::HashMap;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewBuilder, Position, LogicalPosition, Size, LogicalSize, Emitter};
 use tauri::window::WindowBuilder;
+use tauri::webview::PageLoadEvent;
 
 #[cfg(target_os = "windows")]
 unsafe extern "C" {
@@ -305,12 +306,19 @@ pub fn run() {
                 LogicalSize::new(width, height),
             )?;
 
+            let app_handle = app.handle().clone();
             let content_webview = window.add_child(
                 WebviewBuilder::new(
                     "content_view",
                     WebviewUrl::External("about:blank".parse().unwrap()),
                 )
-                .auto_resize(),
+                .auto_resize()
+                .on_page_load(move |_wv, payload| {
+                    if let PageLoadEvent::Finished = payload.event() {
+                        let url = payload.url().to_string();
+                        let _ = app_handle.emit("content_url_changed", url);
+                    }
+                }),
                 LogicalPosition::new(0.0, 114.0),
                 LogicalSize::new(width, height - 114.0),
             )?;
