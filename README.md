@@ -1,6 +1,16 @@
+<div align="center">
+
+![Rode Browser Banner](assets/banner.png)
+
 # 🚀 Rode Browser
 
-Сверхбыстрый, ультралегковесный браузер на базе **Tauri v2 + Win32 C++ FFI**, оптимизированный для слабых ПК и систем с жестким лимитом ОЗУ и слабыми двухъядерными процессорами.
+**Сверхбыстрый, ультралегковесный браузер на базе Tauri v2 + Win32 C++ FFI**
+
+[![WineSquad](https://img.shields.io/badge/WineSquad-Telegram-00c853?style=flat&logo=telegram)](https://t.me/WineSquad)
+[![Release](https://img.shields.io/github/v/release/nanodevmc/Rode-Browser?color=00e676)](https://github.com/nanodevmc/Rode-Browser/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+</div>
 
 ## ✨ Ключевые особенности
 - **Нативный рендер Chromium (WebView2)**: 100% совместимость с современными веб-стандартами (ES2024, WebAssembly, WebGL, CSS Grid), полноценная работа с Google, GitHub, YouTube и Telegram без ограничений безопасности iframe.
