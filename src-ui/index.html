@@ -122,9 +122,9 @@
               <button id="dial-search-btn" class="dial-btn"><span class="material-symbols-outlined">search</span></button>
             </div>
             <div class="home-banner-container">
-              <a href="https://github.com/nanodevmc/Rode-Browser" target="_blank" class="home-banner-card" title="Поставить звёздочку на GitHub">
+              <div id="home-banner-card" class="home-banner-card" data-url="https://github.com/nanodevmc/Rode-Browser" title="Поставить звёздочку на GitHub" role="button" tabindex="0">
                 <img src="banner.png" alt="Rode Browser" class="home-banner-img" />
-              </a>
+              </div>
             </div>
             <div class="tiles-grid">
               <div class="speed-tile" data-url="https://github.com">
@@ -151,6 +151,43 @@
                 <span class="material-symbols-outlined tile-icon">forum</span>
                 <span class="tile-title">Reddit</span>
               </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Page Transition Loader -->
+        <div id="page-loader" class="page-loader-screen" style="display: none;">
+          <div class="loader-spinner-ring"></div>
+          <div class="loader-text" id="loader-status-text">Загрузка страницы...</div>
+        </div>
+
+        <!-- Russia DPI / Block Warning Screen -->
+        <div id="russia-block-screen" class="russia-block-screen" style="display: none;">
+          <div class="russia-block-card">
+            <div class="block-badge-icon">
+              <span class="material-symbols-outlined" style="font-size: 48px; color: #ff5555;">gpp_bad</span>
+            </div>
+            <h2 class="block-card-title">Сервис недоступен или заблокирован в РФ</h2>
+            <p class="block-card-desc">
+              Сайт не отвечает более 10 секунд. Домены YouTube и Telegram подвергаются замедлению и блокировкам ТСПУ провайдеров на территории РФ.
+            </p>
+            <div class="block-actions-row">
+              <button id="btn-open-zapret" class="zapret-btn primary">
+                <span class="material-symbols-outlined">download</span>
+                <span>Скачать Zapret (обход DPI)</span>
+              </button>
+              <button id="btn-open-zapret-guide" class="zapret-btn secondary">
+                <span class="material-symbols-outlined">help</span>
+                <span>Инструкция</span>
+              </button>
+              <button id="btn-retry-page" class="zapret-btn text">
+                <span class="material-symbols-outlined">refresh</span>
+                <span>Попробовать снова</span>
+              </button>
+            </div>
+            <div class="block-ip-tag">
+              <span class="material-symbols-outlined" style="font-size: 14px; color: #ff5555;">location_on</span>
+              <span>Локация определена: <b>Российская Федерация (RU)</b></span>
             </div>
           </div>
         </div>

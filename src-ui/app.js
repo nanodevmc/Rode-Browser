@@ -463,9 +463,57 @@ class BrowserEngine {
     this.modalTitle = document.getElementById('modal-title');
     this.modalBody = document.getElementById('modal-body');
     this.settingsPopup = document.getElementById('settings-popup');
+    this.pageLoader = document.getElementById('page-loader');
+    this.russiaBlockScreen = document.getElementById('russia-block-screen');
+    this.blockTimer = null;
 
     this.initClock();
     this.initEvents();
+  }
+
+  isRestrictedDomain(url) {
+    if (!url) return false;
+    return /^(https?:\/\/)?([a-z0-9-]+\.)*(youtube\.com|youtu\.be|yt\.be|googlevideo\.com|t\.me|telegram\.me|telegram\.org|web\.telegram\.org)/i.test(url);
+  }
+
+  async checkIfRussianIP() {
+    try {
+      const res = await fetch('https://api.country.is/', { signal: AbortSignal.timeout(3500) });
+      const data = await res.json();
+      if (data && data.country === 'RU') return true;
+    } catch {
+      try {
+        const res2 = await fetch('https://ipapi.co/json/', { signal: AbortSignal.timeout(3500) });
+        const data2 = await res2.json();
+        if (data2 && data2.country_code === 'RU') return true;
+      } catch {}
+    }
+    return false;
+  }
+
+  startBlockTimeout(url) {
+    clearTimeout(this.blockTimer);
+    if (!this.isRestrictedDomain(url)) return;
+    this.blockTimer = setTimeout(async () => {
+      const activeTab = this.tabs.get(this.activeTabId);
+      if (!activeTab || !this.isRestrictedDomain(activeTab.url)) return;
+      const isRU = await this.checkIfRussianIP();
+      if (isRU) {
+        this.showRussiaBlockScreen(activeTab.url);
+      }
+    }, 10000);
+  }
+
+  showRussiaBlockScreen(url) {
+    if (!this.russiaBlockScreen) return;
+    NativeBridge.hideContentView();
+    if (this.pageLoader) this.pageLoader.style.display = 'none';
+    this.russiaBlockScreen.style.display = 'flex';
+  }
+
+  hideRussiaBlockScreen() {
+    if (!this.russiaBlockScreen) return;
+    this.russiaBlockScreen.style.display = 'none';
   }
 
   initClock() {
@@ -530,31 +578,56 @@ class BrowserEngine {
 
         if (window.__TAURI__?.event?.listen) {
           window.__TAURI__.event.listen('content_page_started', (event) => {
+            const tabId = event.payload?.tab_id;
             const startedUrl = typeof event.payload === 'string' ? event.payload : event.payload?.url;
-            if (startedUrl && startedUrl !== 'about:blank' && startedUrl !== 'about:home') {
-              this.omnibox.value = startedUrl;
-              this.updateSecurityBadge(startedUrl);
+            if (tabId === this.activeTabId || !tabId) {
+              if (startedUrl && startedUrl !== 'about:blank' && startedUrl !== 'about:home') {
+                this.omnibox.value = startedUrl;
+                this.updateSecurityBadge(startedUrl);
+              }
+              this.triggerProgress();
+              this.startBlockTimeout(startedUrl);
             }
-            this.triggerProgress();
           });
 
-          window.__TAURI__.event.listen('content_page_finished', () => {
-            this.finishProgress();
+          window.__TAURI__.event.listen('content_page_finished', (event) => {
+            const tabId = event.payload?.tab_id;
+            if (tabId === this.activeTabId || !tabId) {
+              this.finishProgress();
+              clearTimeout(this.blockTimer);
+              this.hideRussiaBlockScreen();
+              if (this.pageLoader) this.pageLoader.style.display = 'none';
+              const activeTab = this.tabs.get(this.activeTabId);
+              if (activeTab && activeTab.url !== 'about:home' && this.modalContainer.style.display !== 'flex' && this.settingsPopup.style.display !== 'flex') {
+                NativeBridge.showContentView();
+              }
+            }
           });
 
           window.__TAURI__.event.listen('content_url_changed', (event) => {
+            const tabId = event.payload?.tab_id;
             const newUrl = typeof event.payload === 'string' ? event.payload : event.payload?.url;
             if (newUrl && newUrl !== 'about:blank' && newUrl !== 'about:home') {
-              this.onInternalNavigated(newUrl);
-              // Autofill сохраненных паролей для домена
-              try {
-                const origin = new URL(newUrl).origin;
-                const passwords = StorageManager.getPasswords();
-                const match = passwords.find((p) => p.origin === origin);
-                if (match) {
-                  NativeBridge.autofillCredentials(match.username, match.password);
+              if (tabId) {
+                const targetTab = this.tabs.get(tabId);
+                if (targetTab) {
+                  targetTab.url = newUrl;
+                  targetTab.updateTitleFromUrl(newUrl);
+                  targetTab.resolveFavicon(newUrl);
                 }
-              } catch {}
+              }
+              if (tabId === this.activeTabId || !tabId) {
+                this.onInternalNavigated(newUrl);
+                // Autofill сохраненных паролей для домена
+                try {
+                  const origin = new URL(newUrl).origin;
+                  const passwords = StorageManager.getPasswords();
+                  const match = passwords.find((p) => p.origin === origin);
+                  if (match) {
+                    NativeBridge.autofillCredentials(match.username, match.password);
+                  }
+                } catch {}
+              }
             }
           });
 
@@ -611,8 +684,12 @@ class BrowserEngine {
     this.activeTabId = id;
     const activeTab = this.tabs.get(id);
 
+    clearTimeout(this.blockTimer);
+    this.hideRussiaBlockScreen();
+
     if (activeTab.url === 'about:home') {
       this.speedDial.style.display = 'flex';
+      if (this.pageLoader) this.pageLoader.style.display = 'none';
       this.omnibox.value = '';
       this.updateSecurityBadge('about:home');
       this.updateOmniboxFavicon(null);
@@ -626,7 +703,11 @@ class BrowserEngine {
       this.updateOmniboxFavicon(activeTab.faviconUrl);
       this.updateBookmarkButton(activeTab.url);
 
+      if (this.pageLoader) this.pageLoader.style.display = 'flex';
+      NativeBridge.hideContentView();
+
       this.triggerProgress();
+      this.startBlockTimeout(activeTab.url);
       const bounds = this.getViewportBounds();
       NativeBridge.navigateContent(activeTab.id, activeTab.url, bounds.x, bounds.y, bounds.width, bounds.height);
     }
@@ -650,13 +731,18 @@ class BrowserEngine {
   }
 
   closeTab(id) {
-    if (this.tabs.size <= 1) {
-      NativeBridge.closeWindow();
-      return;
-    }
-
     const tab = this.tabs.get(id);
     if (!tab) return;
+
+    // Если осталась ровно одна вкладка
+    if (this.tabs.size <= 1) {
+      // Если на ней открыт сайт (не главное меню) - переходим в главное меню
+      if (tab.url !== 'about:home') {
+        this.navigateActiveTab('about:home');
+      }
+      // Если уже главное меню ('about:home') - ничего не делаем
+      return;
+    }
 
     tab.tabElement.remove();
     this.tabs.delete(id);
@@ -754,6 +840,9 @@ class BrowserEngine {
     if (!activeTab) return;
 
     this.suggestionsDropdown.style.display = 'none';
+    clearTimeout(this.blockTimer);
+    this.hideRussiaBlockScreen();
+
     activeTab.url = url;
     activeTab.updateTitleFromUrl(url);
     activeTab.resolveFavicon(url);
@@ -769,7 +858,11 @@ class BrowserEngine {
     this.updateOmniboxFavicon(activeTab.faviconUrl);
     this.updateBookmarkButton(url);
 
+    if (this.pageLoader) this.pageLoader.style.display = 'flex';
+    NativeBridge.hideContentView();
+
     this.triggerProgress();
+    this.startBlockTimeout(url);
     StorageManager.addHistory({ title: activeTab.title, url });
 
     const bounds = this.getViewportBounds();
@@ -1054,6 +1147,26 @@ class BrowserEngine {
     document.getElementById('dial-search-btn')?.addEventListener('click', dialSearch);
     document.getElementById('dial-search-input')?.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') dialSearch();
+    });
+
+    document.getElementById('home-banner-card')?.addEventListener('click', () => {
+      this.navigateActiveTab('https://github.com/nanodevmc/Rode-Browser');
+    });
+
+    // Russia DPI / Zapret block screen buttons
+    document.getElementById('btn-open-zapret')?.addEventListener('click', () => {
+      this.navigateActiveTab('https://github.com/bol-van/zapret');
+    });
+
+    document.getElementById('btn-open-zapret-guide')?.addEventListener('click', () => {
+      this.navigateActiveTab('https://github.com/Flowseal/zapret-discord-youtube');
+    });
+
+    document.getElementById('btn-retry-page')?.addEventListener('click', () => {
+      const activeTab = this.tabs.get(this.activeTabId);
+      if (activeTab && activeTab.url !== 'about:home') {
+        this.navigateActiveTab(activeTab.url);
+      }
     });
 
     document.querySelectorAll('.speed-tile').forEach((tile) => {

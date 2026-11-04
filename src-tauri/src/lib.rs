@@ -383,15 +383,28 @@ pub fn run() {
                 })
                 .auto_resize()
                 .on_page_load(move |_wv, payload| {
+                    let active_tab_id = app_handle_load
+                        .try_state::<BrowserState>()
+                        .and_then(|st| st.active_tab.lock().ok().and_then(|a| a.clone()));
+
                     match payload.event() {
                         PageLoadEvent::Started => {
                             let url = payload.url().to_string();
-                            let _ = app_handle_load.emit("content_page_started", url);
+                            let _ = app_handle_load.emit("content_page_started", serde_json::json!({
+                                "tab_id": active_tab_id,
+                                "url": url,
+                            }));
                         }
                         PageLoadEvent::Finished => {
                             let url = payload.url().to_string();
-                            let _ = app_handle_load.emit("content_page_finished", url.clone());
-                            let _ = app_handle_load.emit("content_url_changed", url);
+                            let _ = app_handle_load.emit("content_page_finished", serde_json::json!({
+                                "tab_id": active_tab_id.clone(),
+                                "url": url.clone(),
+                            }));
+                            let _ = app_handle_load.emit("content_url_changed", serde_json::json!({
+                                "tab_id": active_tab_id,
+                                "url": url,
+                            }));
 
                             // Modern instant CSS AdBlock (Zero CPU timer overhead)
                             let adb_js = r#"
