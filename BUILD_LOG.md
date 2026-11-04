@@ -1,5 +1,12 @@
 # Журнал сборок NanoBrowser
 
+## [1.0.8] - 2026-11-04
+- Успешно собран релиз `v1.0.8` (GitHub Actions CI/CD).
+- Инсталлятор `RodeBrowser_1.0.8_Setup.exe` сохранен на Рабочий стол (`C:\Users\nanodev\Desktop\RodeBrowser_1.0.8_Setup.exe`).
+- Исправлено:
+  - Устранено сворачивание и потеря фокуса окна Windows при срабатывании детектора блокировок в РФ. Экран предупреждения теперь загружается нативно напрямую в `content_view` через чистый Liquid Glass data-url без скрытия слоя и без потери Win32 фокуса.
+  - В Rust командах `hide_content_view` и `navigate_content` гарантированно восстанавливается системный фокус окна `main` (`set_focus()`), предотвращая деактивацию и схлопывание окна в панель задач.
+
 ## [1.0.7] - 2026-11-04
 - Успешно собран релиз `v1.0.7` (GitHub Actions CI/CD).
 - Инсталлятор `RodeBrowser_1.0.7_Setup.exe` сохранен на Рабочий стол (`C:\Users\nanodev\Desktop\RodeBrowser_1.0.7_Setup.exe`).

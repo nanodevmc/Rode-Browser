@@ -121,7 +121,14 @@ async fn navigate_content(
 
     if url == "about:home" || url == "about:blank" {
         if let Some(wv) = app.get_webview("content_view") {
+            let _ = wv.set_position(Position::Logical(LogicalPosition::new(-10000.0, -10000.0)));
             let _ = wv.hide();
+        }
+        if let Some(win) = app.get_window("main") {
+            let _ = win.set_focus();
+        }
+        if let Some(ui) = app.get_webview("main") {
+            let _ = ui.set_focus();
         }
         return Ok(());
     }
@@ -251,7 +258,14 @@ fn toggle_eco_mode(app: AppHandle, state: tauri::State<BrowserState>, enabled: b
 #[tauri::command]
 fn hide_content_view(app: AppHandle) -> Result<(), String> {
     if let Some(wv) = app.get_webview("content_view") {
+        let _ = wv.set_position(Position::Logical(LogicalPosition::new(-10000.0, -10000.0)));
         let _ = wv.hide();
+    }
+    if let Some(win) = app.get_window("main") {
+        let _ = win.set_focus();
+    }
+    if let Some(ui) = app.get_webview("main") {
+        let _ = ui.set_focus();
     }
     Ok(())
 }
@@ -259,6 +273,7 @@ fn hide_content_view(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 fn show_content_view(app: AppHandle) -> Result<(), String> {
     if let Some(wv) = app.get_webview("content_view") {
+        let _ = wv.set_position(Position::Logical(LogicalPosition::new(0.0, 114.0)));
         let _ = wv.show();
         let _ = wv.set_focus();
     }

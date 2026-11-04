@@ -491,6 +491,102 @@ class BrowserEngine {
     return false;
   }
 
+  generateBlockPageDataUrl(targetUrl) {
+    let hostname = targetUrl;
+    try {
+      hostname = new URL(targetUrl).hostname;
+    } catch {}
+    const html = `<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Сервис заблокирован в РФ</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
+    body {
+      background: #0b0e11;
+      color: #f0f6f2;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .card {
+      max-width: 520px;
+      width: 100%;
+      background: #121815;
+      border: 1px solid rgba(255, 85, 85, 0.4);
+      border-radius: 16px;
+      padding: 36px 32px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      gap: 16px;
+      box-shadow: 0 16px 50px rgba(0, 0, 0, 0.7);
+    }
+    .badge {
+      width: 64px;
+      height: 64px;
+      border-radius: 50%;
+      background: rgba(255, 85, 85, 0.12);
+      border: 1px solid rgba(255, 85, 85, 0.3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 32px;
+    }
+    h2 { font-size: 20px; font-weight: 700; color: #fff; }
+    p { font-size: 13.5px; color: #96a99e; line-height: 1.6; }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      justify-content: center;
+      margin-top: 10px;
+      width: 100%;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 11px 18px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 600;
+      text-decoration: none;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      border: none;
+    }
+    .btn.primary { background: #00e676; color: #0b0f0d; }
+    .btn.primary:hover { filter: brightness(1.15); transform: translateY(-1px); }
+    .btn.secondary { background: rgba(255, 255, 255, 0.08); color: #f0f6f2; border: 1px solid rgba(255, 255, 255, 0.12); }
+    .btn.secondary:hover { background: rgba(255, 255, 255, 0.15); }
+    .btn.retry { background: transparent; color: #96a99e; border: 1px solid rgba(255, 255, 255, 0.08); }
+    .btn.retry:hover { color: #fff; border-color: rgba(255, 255, 255, 0.25); }
+    .tag { font-size: 11.5px; color: #ff8888; display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="badge">🛡️</div>
+    <h2>Сервис недоступен или заблокирован в РФ</h2>
+    <p>Сайт <b>${hostname}</b> не ответил за 10 секунд. Домены YouTube и Telegram подвергаются замедлению и блокировкам ТСПУ провайдеров на территории РФ.</p>
+    <div class="actions">
+      <a href="https://github.com/bol-van/zapret" target="_blank" class="btn primary">⚡ Скачать Zapret (обход DPI)</a>
+      <a href="https://github.com/Flowseal/zapret-discord-youtube" target="_blank" class="btn secondary">📖 Инструкция по настройке</a>
+      <button class="btn retry" onclick="window.location.href='${targetUrl}'">🔄 Попробовать снова</button>
+    </div>
+    <div class="tag">📍 Локация определена: <b>Российская Федерация (RU)</b></div>
+  </div>
+</body>
+</html>`;
+    return 'data:text/html;charset=utf-8,' + encodeURIComponent(html);
+  }
+
   startBlockTimeout(url) {
     clearTimeout(this.blockTimer);
     if (!this.isRestrictedDomain(url)) return;
@@ -499,14 +595,17 @@ class BrowserEngine {
       if (!activeTab || !this.isRestrictedDomain(activeTab.url)) return;
       const isRU = await this.checkIfRussianIP();
       if (isRU) {
-        this.showRussiaBlockScreen(activeTab.url);
+        if (this.pageLoader) this.pageLoader.style.display = 'none';
+        const blockUrl = this.generateBlockPageDataUrl(activeTab.url);
+        const bounds = this.getViewportBounds();
+        NativeBridge.navigateContent(activeTab.id, blockUrl, bounds.x, bounds.y, bounds.width, bounds.height);
+        NativeBridge.showContentView();
       }
     }, 10000);
   }
 
   showRussiaBlockScreen(url) {
     if (!this.russiaBlockScreen) return;
-    NativeBridge.hideContentView();
     if (this.pageLoader) this.pageLoader.style.display = 'none';
     this.russiaBlockScreen.style.display = 'flex';
   }
